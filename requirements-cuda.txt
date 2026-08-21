@@ -1,0 +1,2 @@
+# Install from the PyTorch CUDA 12.8 wheel index (see scripts/setup.ps1).
+torch==2.11.0

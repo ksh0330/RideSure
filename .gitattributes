@@ -1,0 +1,12 @@
+* text=auto
+.gitattributes text eol=lf
+.gitignore text eol=lf
+.env.example text eol=lf
+*.csv -text
+*.py text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.html text eol=lf
+*.ps1 text eol=crlf

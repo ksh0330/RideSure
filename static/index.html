@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RideSure 복구 데모</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- 레이아웃/지도 높이용 스타일 -->
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #app { height: 100vh; }
+    #map { width: 100%; height: 100%; }
+    .badge {
+      background: #1f2937;
+      color: #fff;
+      border-radius: 9999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      box-shadow: 0 6px 20px rgba(0,0,0,.25);
+      border: 2px solid #fff;
+      transform: translate(-50%, -50%);
+      white-space: nowrap;
+      user-select: none;
+    }
+  </style>
+</head>
+<body class="bg-gray-50">
+  <div id="app" class="grid grid-cols-1 md:grid-cols-12">
+    <!-- 왼쪽 : 기능 영역 -->
+    <aside class="md:col-span-5 xl:col-span-4 h-full flex flex-col">
+      <div class="max-w-3xl mx-auto w-full p-6 space-y-6">
+        <!-- 헤더 -->
+        <div class="bg-white rounded-2xl shadow-lg p-8">
+          <h1 class="text-3xl font-bold mb-2">🚌 RideSure 복구 데모</h1>
+          <p class="text-gray-600">현재 결과는 대전역 → 세종시청의 고정 데모이며 EXAONE은 설명문만 생성합니다.</p>
+          <p class="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">입력 위치는 지도 마커에 반영되지만 노선·확률·승객 수 계산에는 아직 반영되지 않습니다.</p>
+        </div>
+
+        <!-- 입력 폼 -->
+        <div class="bg-white rounded-2xl shadow-lg p-8">
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm font-semibold mb-2">📍 출발지</label>
+              <input
+                id="origin-input"
+                type="text"
+                placeholder="예: 대전역"
+                class="w-full px-4 py-3 rounded-xl border-2 border-gray-300 focus:border-indigo-500 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label class="block text-sm font-semibold mb-2">🎯 도착지</label>
+              <input
+                id="dest-input"
+                type="text"
+                placeholder="예: 세종시청"
+                class="w-full px-4 py-3 rounded-xl border-2 border-gray-300 focus:border-indigo-500 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label class="block text-sm font-semibold mb-2">⏰ 출발 시각</label>
+              <input
+                id="time-input"
+                type="time"
+                value="09:00"
+                class="w-full px-4 py-3 rounded-xl border-2 border-gray-300 focus:border-indigo-500 focus:outline-none"
+              />
+            </div>
+
+            <button
+              id="predict-btn"
+              class="w-full py-4 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition disabled:bg-gray-400 disabled:cursor-not-allowed text-lg"
+            >
+              🔮 고정 데모 결과 보기
+            </button>
+          </div>
+
+          <!-- 상태 메시지 -->
+          <div id="status" class="mt-4 p-4 rounded-xl bg-blue-50 text-sm text-gray-700">
+            출발지, 도착지, 시각을 입력하고 예측 버튼을 눌러주세요.
+          </div>
+        </div>
+
+        <!-- 결과 표시 -->
+        <div id="results-section" class="hidden">
+          <!-- AI 분석 결과 -->
+          <div class="bg-white rounded-2xl shadow-lg p-8 mb-6">
+            <h2 class="text-xl font-bold mb-4">🤖 AI 분석 결과</h2>
+            <div id="reasoning-box" class="p-4 rounded-xl bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-indigo-200">
+              <p id="reasoning-text" class="text-gray-800 leading-relaxed"></p>
+            </div>
+          </div>
+
+          <!-- 추천 경로 -->
+          <div id="routes-container" class="space-y-4">
+            <!-- JavaScript로 동적 생성 -->
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 오른쪽 : 카카오 지도 -->
+    <main class="md:col-span-7 xl:col-span-8 h-full">
+      <div id="map"></div>
+    </main>
+  </div>
+
+  <script>
+    const API_BASE = '';  // 같은 서버에서 서빙하므로 상대 경로
+
+    const originInput = document.getElementById('origin-input');
+    const destInput = document.getElementById('dest-input');
+    const timeInput = document.getElementById('time-input');
+    const predictBtn = document.getElementById('predict-btn');
+    const statusEl = document.getElementById('status');
+    const resultsSection = document.getElementById('results-section');
+    const reasoningText = document.getElementById('reasoning-text');
+    const routesContainer = document.getElementById('routes-container');
+
+    // 지도 쪽에서 사용할 함수 포인터 (나중에 초기화됨)
+    let updateMapByText = null;
+
+    async function predictRoute() {
+      const origin = originInput.value.trim();
+      const dest = destInput.value.trim();
+      const time = timeInput.value;
+
+      if (!origin || !dest) {
+        statusEl.textContent = '⚠️ 출발지와 도착지를 모두 입력하세요.';
+        statusEl.className = 'mt-4 p-4 rounded-xl bg-red-50 text-sm text-red-700';
+        return;
+      }
+
+      try {
+        predictBtn.disabled = true;
+        predictBtn.textContent = '⏳ 데모 설명 생성 중...';
+        statusEl.textContent = '🔍 경로를 분석하고 있습니다...';
+        statusEl.className = 'mt-4 p-4 rounded-xl bg-blue-50 text-sm text-gray-700';
+        resultsSection.classList.add('hidden');
+
+        console.log(`📍 예측 요청: ${origin} → ${dest} @ ${time}`);
+
+        // 지도 업데이트 (출발/도착 마커 표시)
+        if (typeof updateMapByText === 'function') {
+          updateMapByText(origin, dest).catch(err => console.error(err));
+        }
+
+        // FastAPI 백엔드 호출
+        const response = await fetch('/api/predict', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            origin,
+            destination: dest,
+            departure_time: time,
+            date: '2025-11-08'
+          })
+        });
+
+        console.log('📥 API 응답 상태:', response.status);
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.detail || '서버 오류');
+        }
+
+        const data = await response.json();
+        console.log('✅ API 응답:', data);
+
+        displayResults(data);
+
+        statusEl.textContent = '✅ 분석이 완료되었습니다!';
+        statusEl.className = 'mt-4 p-4 rounded-xl bg-green-50 text-sm text-green-700';
+
+      } catch (e) {
+        statusEl.textContent = `❌ 오류: ${e.message}`;
+        statusEl.className = 'mt-4 p-4 rounded-xl bg-red-50 text-sm text-red-700';
+        console.error('❌ 예측 실패:', e);
+      } finally {
+        predictBtn.disabled = false;
+        predictBtn.textContent = '🔮 고정 데모 결과 보기';
+      }
+    }
+
+    function displayResults(data) {
+      if (!data.success) {
+        return;
+      }
+
+      // 결과 섹션 표시
+      resultsSection.classList.remove('hidden');
+
+      // AI 추론 결과
+      if (data.reasoning) {
+        reasoningText.textContent = data.reasoning;
+      }
+
+      // 경로 카드 생성
+      if (data.routes && data.routes.length > 0) {
+        routesContainer.innerHTML = data.routes.map((route, idx) => `
+  <div class="bg-white rounded-2xl shadow-lg p-6 border-2 ${idx === 0 ? 'border-indigo-500' : 'border-gray-200'}">
+    ${
+      idx === 0
+        ? `
+          <div class="flex items-center gap-2 mb-3">
+            <span class="text-xs inline-flex items-center gap-1 px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+              ✨ 최고 추천
+            </span>
+            <span class="text-xs inline-flex items-center gap-1 px-2 py-1 rounded-full bg-gray-100 text-gray-700">
+              📍 추천 경로
+            </span>
+          </div>
+        `
+        : idx === 1
+        ? `
+          <div class="mb-3">
+            <span class="text-xs inline-flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+              👥 최소 승객
+            </span>
+          </div>
+        `
+        : ''
+    }
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="text-2xl font-bold">${route.line_name}</h3>
+              <span class="px-4 py-2 rounded-full text-sm font-bold ${
+                route.boarding_probability >= 80 ? 'bg-green-100 text-green-700' :
+                route.boarding_probability >= 60 ? 'bg-yellow-100 text-yellow-700' :
+                'bg-red-100 text-red-700'
+              }">
+                탑승 확률 ${route.boarding_probability}%
+              </span>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4 text-sm">
+              <div class="flex items-center gap-2">
+                <span class="text-2xl">🚶</span>
+                <div>
+                  <div class="text-gray-500">예상 승객</div>
+                  <div class="font-semibold">${route.expected_load}명</div>
+                </div>
+              </div>
+
+              <div class="flex items-center gap-2">
+                <span class="text-2xl">⏱️</span>
+                <div>
+                  <div class="text-gray-500">소요 시간</div>
+                  <div class="font-semibold">약 ${route.travel_time}분</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-4 p-3 rounded-xl bg-gray-50">
+              <div class="text-xs text-gray-500 mb-1">경유 정류장</div>
+              <div class="text-sm font-medium whitespace-pre-line">
+                ${route.stops.join('\n')}
+              </div>
+            </div>
+          </div>
+        `).join('');
+      }
+
+      // 대안 경로
+      if (data.alternatives && data.alternatives.length > 0) {
+        routesContainer.innerHTML += `
+          <div class="bg-amber-50 rounded-2xl border-2 border-amber-200 p-6">
+            <h3 class="text-lg font-bold mb-3">💡 대안 경로</h3>
+            <ul class="space-y-2">
+              ${data.alternatives.map(alt => `
+                <li class="flex items-start gap-2">
+                  <span class="text-amber-600 mt-1">•</span>
+                  <span class="text-gray-700">${alt}</span>
+                </li>
+              `).join('')}
+            </ul>
+          </div>
+        `;
+      }
+    }
+
+    // 이벤트 리스너
+    predictBtn.addEventListener('click', predictRoute);
+
+    function onEnter(ev) {
+      if (ev.key === 'Enter') predictRoute();
+    }
+    originInput.addEventListener('keyup', onEnter);
+    destInput.addEventListener('keyup', onEnter);
+
+    console.log('✅ 페이지 로드 완료');
+
+    /* ------------------- 카카오 지도 초기화 ------------------- */
+    function showMapConfigurationError(message) {
+      const mapElement = document.getElementById('map');
+      mapElement.replaceChildren();
+      mapElement.className = 'flex items-center justify-center bg-red-50 p-8 text-center text-red-700';
+
+      const errorMessage = document.createElement('p');
+      errorMessage.textContent = message;
+      mapElement.appendChild(errorMessage);
+
+      statusEl.textContent = `⚠️ ${message}`;
+      statusEl.className = 'mt-4 p-4 rounded-xl bg-red-50 text-sm text-red-700';
+    }
+
+    async function loadKakaoMapsSdk() {
+      const response = await fetch('/api/frontend-config', {
+        headers: { 'Accept': 'application/json' },
+        cache: 'no-store'
+      });
+
+      if (!response.ok) {
+        let message = '카카오 지도 설정을 불러오지 못했습니다.';
+        try {
+          const errorData = await response.json();
+          if (errorData.detail) message = errorData.detail;
+        } catch (_) {
+          // JSON 오류 응답이 아니면 기본 메시지를 사용한다.
+        }
+        throw new Error(message);
+      }
+
+      const runtimeConfig = await response.json();
+      const appKey = runtimeConfig.kakao_map_javascript_key;
+      if (typeof appKey !== 'string' || appKey.trim() === '') {
+        throw new Error('카카오 지도 JavaScript 키가 설정되지 않았습니다.');
+      }
+
+      const query = new URLSearchParams({
+        appkey: appKey,
+        autoload: 'false',
+        libraries: 'services'
+      });
+
+      await new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = `https://dapi.kakao.com/v2/maps/sdk.js?${query.toString()}`;
+        script.async = true;
+        script.onload = resolve;
+        script.onerror = () => reject(
+          new Error('카카오 지도 SDK를 불러오지 못했습니다. 허용 도메인과 네트워크를 확인하세요.')
+        );
+        document.head.appendChild(script);
+      });
+    }
+
+    async function initializeKakaoMap() {
+      try {
+        await loadKakaoMapsSdk();
+
+        if (!globalThis.kakao?.maps) {
+          throw new Error('카카오 지도 SDK가 올바르게 초기화되지 않았습니다.');
+        }
+
+        kakao.maps.load(() => {
+      const DEFAULT_CENTER = new kakao.maps.LatLng(36.3504, 127.3845); // 대전 근처
+
+      const map = new kakao.maps.Map(document.getElementById('map'), {
+        center: DEFAULT_CENTER,
+        level: 7
+      });
+      const geocoder = new kakao.maps.services.Geocoder();
+      const places = new kakao.maps.services.Places();
+
+      function makeBadge(label, position) {
+        const el = document.createElement('div');
+        el.className = 'badge';
+        el.textContent = label;
+        return new kakao.maps.CustomOverlay({
+          position,
+          content: el,
+          yAnchor: 1,
+          zIndex: 9999
+        });
+      }
+
+      let originOverlay = null;
+      let destOverlay   = null;
+
+      function setOrigin(latlng) {
+        if (!originOverlay) {
+          originOverlay = makeBadge('출발', latlng);
+          originOverlay.setMap(map);
+        } else originOverlay.setPosition(latlng);
+        fitToMarkers();
+      }
+
+      function setDest(latlng) {
+        if (!destOverlay) {
+          destOverlay = makeBadge('도착', latlng);
+          destOverlay.setMap(map);
+        } else destOverlay.setPosition(latlng);
+        fitToMarkers();
+      }
+
+      function fitToMarkers() {
+        const b = new kakao.maps.LatLngBounds();
+        let c = 0;
+        if (originOverlay) { b.extend(originOverlay.getPosition()); c++; }
+        if (destOverlay)   { b.extend(destOverlay.getPosition());   c++; }
+        if (c) map.setBounds(b, 40, 40, 40, 40);
+      }
+
+      function geocode(q) {
+        return new Promise((resolve, reject) => {
+          // 도로명/지번 주소 우선
+          geocoder.addressSearch(q, (r, s) => {
+            if (s === kakao.maps.services.Status.OK && r.length) {
+              const x = r[0];
+              resolve({ lat: +x.y, lon: +x.x });
+            } else {
+              // 안 되면 키워드 검색
+              places.keywordSearch(q, (kr, ks) => {
+                if (ks === kakao.maps.services.Status.OK && kr.length) {
+                  const k = kr[0];
+                  resolve({ lat: +k.y, lon: +k.x });
+                } else reject(new Error('지오코딩 실패'));
+              });
+            }
+          });
+        });
+      }
+
+      // 왼쪽 폼의 텍스트를 이용해 지도에 마커 표시
+      updateMapByText = async (o, d) => {
+        if (!o || !d) return;
+        try {
+          statusEl.textContent = '지도에서 출발/도착 위치를 찾는 중입니다...';
+          const [go, gd] = await Promise.all([geocode(o), geocode(d)]);
+          setOrigin(new kakao.maps.LatLng(go.lat, go.lon));
+          setDest(new kakao.maps.LatLng(gd.lat, gd.lon));
+          statusEl.textContent = '지도에 출발/도착 마커를 표시했습니다.';
+        } catch (e) {
+          console.error(e);
+          statusEl.textContent = '지도에 위치를 표시하지 못했습니다.';
+        }
+          };
+        });
+      } catch (error) {
+        console.error('카카오 지도 초기화 실패');
+        showMapConfigurationError(error.message);
+      }
+    }
+
+    initializeKakaoMap();
+  </script>
+</body>
+</html>
