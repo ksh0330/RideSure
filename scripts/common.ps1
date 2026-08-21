@@ -120,12 +120,44 @@ function Stop-ManagedPythonProcess([string]$Name, [string]$ScriptPath, [string]$
         Write-Host "[skip] No managed $Name process is running."
         return
     }
-    Stop-Process -Id $managed.ProcessId
+    # On Windows, .venv\Scripts\python.exe can remain as a launcher parent while
+    # the base Python child owns the listening port. Discover and validate the
+    # complete descendant tree so stop never leaves that project child behind.
+    $descendants = @()
+    $frontier = @([int]$managed.ProcessId)
+    while ($frontier.Count -gt 0) {
+        $next = @()
+        foreach ($parentId in $frontier) {
+            $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$parentId" -ErrorAction SilentlyContinue)
+            foreach ($child in $children) {
+                if ($child.Name -eq "conhost.exe") {
+                    # A private console host is an implementation detail of the
+                    # hidden Windows process and exits with its launcher.
+                    continue
+                }
+                if ($child.CommandLine -notlike "*$ScriptPath*") {
+                    throw "Refusing to stop $Name because descendant PID $($child.ProcessId) does not match $ScriptPath."
+                }
+                $descendants += $child
+                $next += [int]$child.ProcessId
+            }
+        }
+        $frontier = $next
+    }
+
+    $stopIds = @($descendants | Select-Object -ExpandProperty ProcessId)
+    [array]::Reverse($stopIds)
+    $stopIds += [int]$managed.ProcessId
     try {
-        Wait-Process -Id $managed.ProcessId -Timeout 20 -ErrorAction SilentlyContinue
+        foreach ($processId in $stopIds) {
+            Stop-Process -Id $processId -ErrorAction SilentlyContinue
+        }
+        foreach ($processId in $stopIds) {
+            Wait-Process -Id $processId -Timeout 20 -ErrorAction SilentlyContinue
+        }
     }
     finally {
         Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
     }
-    Write-Host "[stop] $Name PID=$($managed.ProcessId)"
+    Write-Host "[stop] $Name PID tree=$($stopIds -join ',')"
 }
