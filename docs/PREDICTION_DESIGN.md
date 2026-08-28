@@ -1,208 +1,118 @@
-# Neo4j 직접 노선 예측 MVP 설계 감사
+# RideSure 예측·경로 설계
 
-## 결론
+## 구현된 요청 흐름
 
-2026-08-21 현재 `feature/neo4j-prediction` 브랜치의 seed CSV와 Neo4j 그래프만으로는 요청된 좌표 기반 직접 노선 MVP를 신뢰성 있게 구현할 수 없다. 필수 입력인 정류장 좌표가 전혀 없고, 현재 ETL이 노선 패턴/방향과 정류장 순번별 Load 관측을 병합하면서 서로 다른 값을 잃기 때문이다.
-
-이 상태에서 가까운 정류장, 같은 방향의 정류장 순서, 지도 polyline, 정류장별 Load를 반환하면 추측 또는 잘못된 값이 된다. 따라서 하드코딩 응답을 불완전한 계산으로 교체하지 않았으며, 기능 코드·DB·CSV·Docker 볼륨을 변경하지 않았다.
-
-## 조사 기준
-
-- Git 브랜치: `feature/neo4j-prediction`
-- 시작 작업 트리: clean
-- Neo4j: 로컬 Docker `neo4j:5.26-community`
-- CSV: CP949 인코딩의 `노선·정류장 지표(노선별 차내 재차인원)_20251108` 3개 분할 파일
-- 조사 방식: Neo4j 프로퍼티/관계 쿼리, CSV 전체 행 분석, 실제 API/프런트 코드 확인
-
-## 현재 프런트와 API 계약
-
-브라우저는 다음 JSON만 `/api/predict`로 전송한다.
-
-```json
-{
-  "origin": "사용자 입력 문자열",
-  "destination": "사용자 입력 문자열",
-  "departure_time": "HH:MM",
-  "date": "2025-11-08"
-}
-```
-
-- `origin`과 `destination`은 텍스트다.
-- 현재 위치 API(`navigator.geolocation`)는 사용하지 않는다.
-- 카카오 `addressSearch` 또는 `keywordSearch`로 검색한 장소 좌표는 지도 마커에만 쓰이며 API 요청에는 포함되지 않는다.
-- 목적지 좌표도 API에 포함되지 않는다.
-- `app.py`의 요청 모델에는 위도/경도와 범위 검증이 없다.
-- 기존 응답은 노선 ID/이름, 근거 없는 탑승 확률, 고정 승객 수, 정류장 이름 문자열, 소요 시간만 포함한다.
-- 정류장 ID/좌표, 접근 거리, 원본 Load, 적용 시간대, 계산식, polyline은 없다.
-
-## 실제 Neo4j 스키마
-
-### 노드
-
-| 라벨 | 개수 | 실제 프로퍼티 | 자료형/범위 |
-|---|---:|---|---|
-| `Line` | 148 | `id`, `name` | 문자열 |
-| `Stop` | 2,047 | `id`, `name` | 문자열 |
-| `Load` | 172,872 | `id`, `date`, `hour`, `count`, `line_id`, `stop_id` | 날짜는 문자열, 시간/재차인원은 정수 |
-
-Stop 2,047개 모두 `id`, `name`만 가진다. `lat`, `lon`, `latitude`, `longitude`, `x`, `y`, 위도/경도 등 좌표 후보 프로퍼티는 0개다. 좌표계도 정의돼 있지 않다.
-
-Stop 이름이 같은 별도 노드는 없지만, 이는 이름을 정규화한 slug 자체를 ID로 사용하며 동명 정류장을 하나로 합친 결과다. 실제 물리적으로 다른 동명 정류장이 존재하는지를 판별할 정류장 원본 ID나 좌표가 없다.
-
-Line은 `id`와 `name`이 모두 노선 번호 문자열이다.
-
-Load는 `2025-11-08` 한 날짜와 0~23시만 존재한다. 요일 프로퍼티는 없으며 해당 날짜는 토요일이다. `count` 범위는 0~61, 평균은 약 3.529이고 111,140개가 0이다.
-
-### 관계
+2026-08-21 현재 `/api/predict`는 Neo4j v2의 실제 topology와 historical 관측을 사용한다.
 
 ```text
-(Line)-[:HAS_STOP {key, seq}]->(Stop)       7,203개
-(Load)-[:AT]->(Stop)                       172,872개
-(Load)-[:AFFECTS]->(Line)                  172,872개
+origin/destination text + optional Kakao coordinates + date/time
+  -> routeable stop candidates (nearby when mapped, name fallback otherwise)
+  -> RoutePattern 안의 directed NEXT traversal
+  -> 최대 3개 direct pattern 후보
+  -> fresh realtime / exact historical / LoadProfile / UNKNOWN
+  -> structured route and congestion facts
+  -> grounded EXAONE explanation or deterministic fallback
+  -> Kakao markers and optional stop-to-stop polyline
 ```
 
-- `HAS_STOP` 방향은 Line → Stop이다.
-- `seq`는 정수 0~384지만 노선 패턴/방향 ID가 없다.
-- `AT`는 Load가 측정된 Stop을 연결한다.
-- `AFFECTS`는 Load가 속한 Line을 연결한다.
+현재 기본 graph의 historical Stop에는 좌표가 없으므로 실제 입력은 정류장명 검색 fallback을 주로 사용한다. 좌표가 전달되어도 매핑된 routeable Stop이 없으면 좌표를 조작하지 않고 텍스트 후보를 찾는다.
 
-## CSV가 제공하는 정보와 누락 정보
+## API 계약
 
-실제 열:
+`POST /api/predict` 입력:
+
+- 필수: `origin`, `destination`
+- 선택: `departure_time` (`HH:MM`, 기본 09시), `date` (`YYYY-MM-DD`, 기본 `TARGET_DATE`)
+- 선택: `origin_lat`/`origin_lon`, `destination_lat`/`destination_lon`
+- 각 좌표 쌍은 함께 제공해야 하며 위도 `-90..90`, 경도 `-180..180`을 검증한다.
+
+응답의 각 `routes[]`는 line/pattern, occurrence별 정류장, 선택 좌표, geometry 종류, historical/realtime 근거와 상대 혼잡 안내를 담는다. 핵심 혼잡 필드는 다음과 같다.
+
+- `onboard_count`: 원본 또는 realtime의 차내 재차인원
+- `relative_percentile`: 같은 RoutePattern·service date·hour의 유효 historical 관측 대비 mid-rank percentile
+- `congestion_level`: `LOW`, `MEDIUM`, `HIGH`, `VERY_HIGH`, `UNKNOWN`
+- `boarding_guidance`: `여유`, `보통`, `혼잡`, `매우 혼잡`, `데이터 부족`
+- `evidence_source`: 예: `HISTORICAL_OBSERVATION`, `REALTIME_OBSERVATION`, `HISTORICAL_PROFILE`, `NONE`
+- `congestion_status`: 관측의 가용 상태
+- `sample_size`: 상대 비교에 사용한 표본 수
+
+`boarding_probability`, `expected_load`, `travel_time`은 이전 계약 호환을 위한 deprecated nullable 필드다. 현재 근거로 계산할 수 없으므로 모두 `null`이며 임의 숫자를 채우지 않는다.
+
+직행 경로가 없거나 정류장을 찾지 못하면 서비스는 임의 경로 대신 명시적 400 오류를 반환한다. 프런트는 이 메시지를 표시한다.
+
+## 직접 경로와 반복 정류장
+
+`V2TransitRepository.find_direct_routes()`는 다음 topology를 조회한다.
 
 ```text
-노선, 기종점, 정류장순번, 정류장명, 00시~23시
+origin Stop
+  <- AT_STOP - origin StopOccurrence
+  <- HAS_OCCURRENCE - RoutePattern
+  <- HAS_PATTERN - Line
+origin StopOccurrence - NEXT* -> destination StopOccurrence
+  - AT_STOP -> destination Stop
 ```
 
-세 파일을 합치면 11,375개 원본 행이며 24시간으로 펼치면 273,000개 관측 행이다. 좌표, 원본 정류장 ID, 정류장 방향 코드, 차량 정원, 실제 탑승 성공 레이블, 예측값, 요일 열은 없다.
+경로는 `seq < seq`만 비교하지 않고 실제 `NEXT` 관계를 통과하며, 모든 relationship이 같은 pattern에서 연속 seq인지 확인한다. 반복 정류장이 있으면 occurrence 조합별 경로 중 짧은 후보를 먼저 반환하고 서비스는 pattern별 최선 하나만 유지한다.
 
-파일명과 지표명으로 확인되는 `count`의 의미는 특정 노선·정류장·시간대의 **차내 재차인원**이다. 승차 인원, 버스 정원 대비 혼잡률, 정규화 점수, 탑승 성공 확률 또는 미래 예측값이 아니다.
+B1 기준은 대전역 `seq=2` → 세종시청 `seq=13`의 11-hop, 반대 방향 세종시청 `seq=42` → 대전역 `seq=52` 경로다. `오송역2.3.4`의 `seq=27`, `seq=28`도 독립 occurrence로 남는다.
 
-CSV의 `(노선, 기종점)`은 154개 연속 패턴으로 그룹화할 수 있다. 각 그룹 내부의 순번은 중복이나 누락 없이 연속이다. 148개 노선 중 5개는 둘 이상의 패턴을 가진다. 이 원본 패턴 정보는 현재 Neo4j에 저장되지 않는다.
+현재 대안은 다른 direct RoutePattern 후보뿐이며 최대 3개 경로 중 첫 번째가 추천 경로다. 환승 탐색과 소요시간 계산은 구현하지 않았다.
 
-## 현재 ETL에서 발생한 정보 손실
+## 혼잡과 fallback
 
-### 방향/패턴 및 순번 손실
+`onboard_count`는 탑승 성공 확률이나 정원 대비 혼잡률이 아니다. exact historical 관측이 있으면 같은 pattern·날짜·시간의 유효 값 분포에서 mid-rank percentile을 계산한다.
 
-현재 `data_insert.py`는 다음 형태로 관계를 병합한다.
+| percentile | level | guidance |
+|---:|---|---|
+| `<= 33` | `LOW` | 여유 |
+| `<= 67` | `MEDIUM` | 보통 |
+| `<= 90` | `HIGH` | 혼잡 |
+| `> 90` | `VERY_HIGH` | 매우 혼잡 |
+| 없음 | `UNKNOWN` | 데이터 부족 |
 
-```cypher
-MERGE (l)-[hs:HAS_STOP]->(s)
-ON CREATE SET hs.seq = r.seq
-ON MATCH SET hs.seq = coalesce(hs.seq, r.seq)
-```
-
-따라서 동일 Line/Stop이 다른 패턴이나 순번에 다시 등장하면 최초 `seq` 하나만 남는다.
-
-- 중복된 `(Line, Stop)` CSV 키: 3,487개
-- 서로 다른 순번을 가진 `(Line, Stop)` 키: 3,484개
-- 동일 노선에서 같은 `seq`를 가진 서로 다른 Stop 관계가 다수 존재
-- 예: Line `1`의 `seq=1`에는 `원내동공영차고지`와 `충대농대종점`이 함께 존재
-
-그러므로 `origin.seq < destination.seq`만으로 같은 방향 경로를 판정할 수 없다.
-
-### 순번별 Load 손실
-
-현재 Load ID는 다음과 같다.
+근거 우선순위:
 
 ```text
-line_id|stop_id|date|hour
+fresh RealtimeObservation
+  -> exact LoadObservation
+  -> existing LoadProfile
+  -> UNKNOWN / INSUFFICIENT_DATA
 ```
 
-패턴과 순번이 빠져 있어 순환 노선 또는 중복 정류장의 서로 다른 관측이 하나로 병합된다.
+Realtime 조회와 stale 판정은 준비되어 있으나 importer가 없으므로 현재 실제 동작은 historical 또는 `UNKNOWN`이다. `LoadProfile` 조회도 지원하지만 생성 batch는 없다. 값을 찾지 못했을 때 0으로 바꾸지 않는다.
 
-- 중복 Load 키: 83,688개
-- 그중 원본 `count` 값이 서로 다른 키: 33,650개
-- 한 키에 최대 4개의 서로 다른 원본 값 존재
-- 예: B1의 `대전역`은 순환 경로의 서로 다른 위치에서 같은 시간대에 서로 다른 재차인원을 갖지만 Neo4j에는 마지막 적재 값 하나만 남음
+예시 데이터에서 B1 대전역은 08시 17명, 09시 24명이며 08시 pattern 내 상대 percentile은 약 56.6, `MEDIUM/보통`이다.
 
-따라서 현재 Load를 특정 승차 순번의 재차인원이라고 단정할 수 없다.
+## 좌표와 지도
 
-## 요청 기능별 가능 여부
+Historical CSV에는 공식 stop ID와 좌표가 없다. 기본 graph의 historical Stop은 `UNMAPPED_NAME_ONLY`이고 현재 좌표 커버리지는 0이다. `public_data.py`가 official Stop과 `RouteStopStaging`을 적재할 수 있지만 검증된 historical 매핑을 자동 생성하지 않는다.
 
-| 기능 | 현재 가능 여부 | 근거 |
-|---|---|---|
-| 사용자 장소 텍스트를 카카오 지도로 표시 | 가능 | 기존 브라우저 지오코딩 |
-| 입력 좌표를 API로 전달 | 미구현이나 코드 변경 가능 | 요청 모델 확장 필요 |
-| 좌표 기반 가까운 Stop 선택 | 불가능 | 모든 Stop 좌표 누락 |
-| 같은 방향의 올바른 직접 노선 | 불가능 | 패턴/방향 정보가 Neo4j에서 손실 |
-| 순번별 Load 조회 | 불가능 | Load ID에 패턴/순번 누락, 충돌 값 덮어쓰기 |
-| 탑승 확률 | 산출 불가 | 정원·탑승 성공 레이블 없음 |
-| 정류장 polyline | 불가능 | 정류장 좌표 누락 |
-| 환승 | 직접 노선보다 더 불확실 | 방향·좌표·환승 정의 모두 없음 |
-
-환승은 이 MVP 범위에서 제외해야 한다.
-
-## 필요한 최소 데이터 보완
-
-기능 구현을 재개하려면 다음 두 가지가 필요하다.
-
-1. 출처와 재배포 조건이 확인된 정류장 좌표 seed
-   - 안정적인 원본 정류장 ID
-   - 정류장 이름
-   - WGS84 위도/경도 또는 명시된 좌표계
-   - 동명 정류장을 구분할 수 있는 위치/방향 정보
-2. CSV 원본 273,000개 관측을 보존하는 패턴/순번 스키마 마이그레이션 승인
-
-권장 추가 스키마:
+선택한 경로의 모든 StopOccurrence가 실제 좌표를 가질 때만 API는 다음을 반환한다.
 
 ```text
-(Line)-[:HAS_PATTERN]->(RoutePattern {id, terminal_description})
-(RoutePattern)-[:CALLS_AT {seq, occurrence_id}]->(Stop)
-(LoadObservation {pattern_id, seq, date, hour, count})-[:AT]->(Stop)
-(LoadObservation)-[:AFFECTS]->(Line)
+geometry_kind = STOP_TO_STOP_APPROXIMATION
+geometry = occurrence 순서의 lat/lon 목록
 ```
 
-기존 노드/관계를 삭제하지 않고 새 구조를 병행 생성한 뒤 검증할 수 있다. 다만 이는 현재 허용 범위의 단순 인덱스 추가보다 큰 스키마 변경이므로 명시적 승인 후 별도 마이그레이션으로 진행해야 한다.
+하나라도 좌표가 없거나 좌표가 2개 미만이면 `geometry_kind=UNAVAILABLE`, `geometry=[]`다. stop-to-stop 선은 정류장 좌표를 직선으로 이은 근사이며 도로 shape나 실제 차량 궤적이 아니다. 현재 공식 route shape는 구현하지 않았다.
 
-카카오 키워드 검색으로 2,047개 정류장 이름을 자동 좌표화하는 방식은 사용하지 않는다. 동명·유사 정류장 오매칭을 검증할 원본 ID가 없고, 결과를 seed 데이터로 재배포할 권리도 확인되지 않았기 때문이다.
+## EXAONE 경계
 
-## 데이터 보완 후 직접 노선 MVP 설계
+서비스는 추천 경로의 line, 정류장, 날짜·시간, 재차인원, 상대 percentile/등급, evidence source, 대안 line만 JSON facts로 EXAONE에 전달한다. 프롬프트는 노선·정류장·수치·좌표를 추가하지 말고 탑승 확률을 만들지 말라고 명시한다.
 
-1. 브라우저가 카카오로 검색한 출발/목적 장소의 WGS84 위도·경도를 API 요청에 포함한다.
-2. API가 위도 `[-90, 90]`, 경도 `[-180, 180]`, 날짜, `HH:MM`을 검증한다.
-3. Python이 Haversine 거리로 각 위치에서 가까운 Stop 후보를 제한된 반경/개수로 선택한다.
-4. Neo4j에서 동일 RoutePattern의 `origin.seq < destination.seq`인 직접 노선만 조회한다.
-5. 승차부터 하차까지 `seq` 순서의 Stop과 좌표를 반환한다.
-6. 해당 `pattern_id`, 승차 `seq`, 날짜, 시간의 LoadObservation을 조회한다.
-7. 접근 거리, 정류장 수, 원본 재차인원을 정렬 근거로 사용한다.
-8. 도로 형상 데이터가 없으므로 Stop 좌표를 직선으로 잇는 polyline이라고 명시한다.
-9. EXAONE에는 확정된 JSON 사실만 주고, 노선/정류장/숫자 whitelist 검증에 실패하면 서버 기본 설명을 사용한다.
+생성문은 다음 grounding 조건을 통과해야 한다.
 
-## 혼잡 안내 설계
+- 500자 이하이며 `%`나 `탑승 확률` 표현이 없음
+- 추천 line 이름과 `boarding_guidance`를 포함
+- 구조화 facts에 없던 숫자를 추가하지 않음
 
-차량 정원이 없으므로 `탑승 확률`이나 정원 대비 혼잡률을 만들지 않는다. 우선 API에는 다음을 제공한다.
+LLM HTTP 오류, 빈 응답 또는 grounding 실패 시에도 route/congestion 구조화 결과는 그대로 반환하며 서버의 결정론적 설명을 사용한다. EXAONE은 topology나 혼잡 수치를 계산하지 않는다.
 
-- 원본 `onboard_count`
-- 적용 날짜/요일/시간
-- 데이터 존재 여부
-- 같은 날짜·시간대 관측 분포에서의 기술적 percentile(선택 사항)
-- `낮음/중간/높음` 같은 표시는 percentile 구간임을 명시
+## 남은 범위
 
-percentile은 상대 비교일 뿐 탑승 성공 가능성이 아니며, 동일 입력에 항상 같은 값을 반환해야 한다. 차량 정원 데이터가 추가되기 전에는 여유 좌석 수나 확률을 표시하지 않는다.
-
-## 향후 공공데이터 갱신 구조
-
-사용자 요청마다 외부 API를 호출하지 않는다.
-
-```text
-공공데이터 API 또는 승인된 파일
-  → 배치 수집
-  → 원본 ID/좌표계/중복/범위 검증
-  → 정규화된 seed 또는 staging 저장
-  → Neo4j RoutePattern/Stop/LoadObservation 갱신
-  → 검증 통과 후 사용자 API에서 조회
-```
-
-데이터 제공 기관, URL, 라이선스, 다운로드 시각과 변환 이력을 함께 기록해야 한다.
-
-## 구현 재개 조건과 테스트 기준
-
-재개 전 다음을 합의해야 한다.
-
-- 좌표 seed의 출처·라이선스·좌표계
-- 새 패턴/관측 스키마를 기존 볼륨에 비파괴 방식으로 추가할지 여부
-- 정류장 후보 반경과 최대 개수
-- 상대 혼잡 percentile의 비교 모집단
-
-이후 최소 테스트는 좌표 범위/누락, Haversine 거리, 동명 정류장, 같은 패턴의 순방향, 역방향 배제, 반복 정류장 occurrence, 시간별 Load 변화, Load 누락, 직접 노선 없음, 안전한 LLM fallback, API 모델, JavaScript 문법과 실제 브라우저 polyline/마커를 포함한다.
+1. 공식 B1 route/stop sequence를 확인하고 historical occurrence와 검증된 mapping을 생성한다.
+2. mapping된 좌표 커버리지를 확보해 지도 stop-to-stop approximation을 실제로 검증한다.
+3. 필요할 때 환승 탐색, 공식 route shape, 소요시간 근거를 추가한다.
+4. 실제 realtime source가 확보된 경우에만 importer와 freshness 운영 정책을 추가한다.
+5. 탑승 확률은 차량 정원·대기열·탑승 성공 ground truth가 확보되기 전까지 구현하지 않는다.

@@ -1,181 +1,164 @@
 # RideSure 프로젝트 가이드
 
-## 1. 프로젝트의 실제 상태
+## 1. 프로젝트 경계
 
-RideSure v0.1-demo는 복구된 시연 코드입니다. 데이터 적재와 조회용 함수, 로컬 LLM 서버, 웹 UI는 동작하지만 사용자 입력을 이용해 경로와 혼잡도를 계산하는 예측 파이프라인은 아직 연결되지 않았습니다.
+RideSure는 2025 DSC 공유대학 KT 기업연계 오픈데이터 활용 스타트업 챌린지에서 제안한 B1 BRT 혼잡·탑승 불확실성 문제를 포트폴리오용으로 재구성한 FastAPI 데모다. 전국 단위 운영 서비스가 아니라, 제한된 공공데이터로도 추적 가능한 경로·혼잡 근거와 안전한 설명을 만드는 프로토타입이다.
 
-현재 고정된 값은 `service.py`의 `BusPredictionService.predict_boarding()`에 있습니다.
+원 competition prototype의 고정 응답은 현재 작업 브랜치에서 Neo4j v2 조회로 교체됐다. 기존 v1 graph와 preserved demo history는 유지한다.
 
-- 출발/도착: 대전역 → 세종시청,시의회,교육청
-- 경로: B1과 `101 / 1002 (환승 1회)` 두 개
-- 각 경로의 정류장 목록, 승객 수, 탑승 확률, 소요 시간
-- 사용자 날짜: 사용되지 않음
-- 사용자 출발 시각: 계산에는 사용되지 않고 EXAONE 설명 프롬프트에만 포함
-
-`find_nearest_stop()`, `find_routes_between_stops()`, `get_route_load_data()`, `calculate_boarding_probability()` 함수는 존재하지만 현재 `predict_boarding()`에서 호출되지 않습니다. 이 경계를 바꾸는 작업은 별도의 `feature/neo4j-prediction` 기능으로 설계·검증해야 하며, 데모 복구 작업에 임의 예측 알고리즘을 추가하지 않았습니다.
-
-## 2. 전체 실행 흐름
+## 2. 현재 아키텍처
 
 ```text
-사용자 브라우저 (static/index.html)
-  ├─ GET /api/frontend-config ──> app.py ──> .env의 Kakao JavaScript 키
-  ├─ Kakao SDK ──> 입력 텍스트 지오코딩/지도 마커
-  └─ POST /api/predict ──> app.py ──> service.py
-                                      ├─ 고정 경로/확률/승객 수 구성
-                                      ├─ POST /generate ──> llm_server.py ──> EXAONE
-                                      └─ 고정 결과 + 생성된 설명 반환
+Browser / Kakao place search
+  -> POST /api/predict (text, optional coordinates, date/time)
+  -> service.py
+       -> prediction_v2.py -> Neo4j v2 NEXT route + congestion evidence
+       -> llm_server.py /generate -> EXAONE explanation
+       -> deterministic explanation when EXAONE fails validation
+  -> structured route cards + Kakao markers/polyline when coordinates exist
 
-CSV 3개 ──> data_insert.py ──> Neo4j
-app.py /health ──> service.py ──> Neo4j 연결 확인
-service.py의 조회 함수 ──> Neo4j (현재 예측 경로에서는 호출되지 않음)
+Historical CSV -> data_insert_v2.py -> isolated Neo4j v2
+Optional official CSV/TAGO -> public_data.py -> official Stop/RouteStopStaging
 ```
 
-버튼을 누르면 브라우저는 두 작업을 시작합니다. 카카오 SDK는 입력한 위치를 검색해 지도 마커를 옮깁니다. 동시에 `/api/predict`가 입력값을 서버로 보내지만, 서비스는 현재 이를 고정 결과 계산에 사용하지 않습니다. EXAONE은 고정 경로·승객 수·확률을 담은 프롬프트를 받아 설명문을 생성합니다. LLM이 실패하면 같은 고정 결과에 대한 규칙 기반 문장이 대체됩니다.
+역할 분리:
 
-## 3. 주요 Python 파일
+- Neo4j v2: line, pattern, ordered occurrence, direct topology, 관측 provenance
+- Python repository/service: 후보 선택, 경로 ranking, percentile/등급, API 구조화
+- EXAONE: 확정된 structured facts를 짧은 한국어로 표현
+- Kakao Map: 사용자 위치 marker와 반환된 route geometry 시각화
 
-- `app.py`: 웹 정적 파일, `/api/frontend-config`, `/health`, `/api/predict`, Swagger 문서를 제공하는 경량 FastAPI 서버입니다.
-- `service.py`: FastAPI와 Neo4j/LLM을 잇는 서비스 계층입니다. Neo4j 조회 함수와 휴리스틱 함수가 있지만 현재 예측 응답은 이 파일에 고정돼 있습니다.
-- `config.py`: 프로젝트 루트 `.env`를 로드하고 설정 그룹을 값 노출 없이 검증합니다. Neo4j 비밀번호 기본값은 없습니다.
-- `llm_server.py`: EXAONE 토크나이저/모델을 한 번 GPU에 로드하고 `/health`, `/generate`를 제공하는 별도 FastAPI 서버입니다. 혼잡도 예측 모델이 아니라 설명문 생성기입니다.
-- `data_insert.py`: 세 CSV의 스키마를 검사하고 wide 형식의 24시간 열을 Load 노드로 펼쳐 Neo4j에 `MERGE`합니다. 빈/완전/부분 DB를 판정하고 기준 개수와 관계를 검증합니다.
+EXAONE은 노선·정류장·혼잡 수치를 계산하거나 발명하지 않는다. LLM 서버를 별도 프로세스로 두어 수 GB 모델/GPU 수명주기를 웹 API와 분리한다.
 
-`app.py`와 `llm_server.py`가 별도 프로세스인 이유는 EXAONE의 수 GB 모델과 GPU 수명주기를 웹/API 프로세스와 분리하기 위해서입니다. 앱을 재시작해도 모델 프로세스를 별도로 관리할 수 있고, 앱은 HTTP로 설명 생성을 요청하며 health 상태를 독립 확인합니다. 두 프로세스가 논리적으로 필수라기보다 현재 구조에서 무거운 GPU 모델을 한 번만 로드하고 장애 경계를 분리하기 위한 선택입니다.
+## 3. API 사용
 
-## 4. Neo4j, 컨테이너, 볼륨, CSV
+`POST /api/predict` 예시:
 
-Neo4j는 노드와 관계로 데이터를 저장하는 그래프 데이터베이스입니다. 이 프로젝트는 다음 스키마를 사용합니다.
+```json
+{
+  "origin": "대전역",
+  "destination": "세종시청",
+  "departure_time": "08:00",
+  "date": "2025-11-08"
+}
+```
+
+위도/경도가 있을 때 `origin_lat`, `origin_lon`, `destination_lat`, `destination_lon`도 보낼 수 있다. 쌍의 한 값만 보내거나 범위를 벗어나면 422다. Text/date/time 검증을 통과했지만 정류장 또는 direct path가 없으면 400으로 명확히 실패한다.
+
+응답은 최대 3개 direct route, occurrence 순서의 stops, historical/realtime evidence, `onboard_count`, 상대 percentile/등급, `boarding_guidance`, geometry와 explanation을 포함한다. 추천 외 direct pattern은 `alternatives`에도 요약된다.
+
+Deprecated `boarding_probability`, `expected_load`, `travel_time`은 compatibility를 위해 남아 있지만 `null`이다. 이 데이터로 탑승 성공 확률이나 정원 대비 혼잡률을 만들지 않는다.
+
+## 4. 데이터와 fallback
+
+Neo4j v2는 세 historical CSV의 11,375행과 273,000개 시간대 셀을 모두 독립 `LoadObservation`으로 보존한다. 현재 셀은 모두 valid 0 이상 정수이며 loader는 향후 missing/invalid를 0과 구분한다.
+
+혼잡 근거 우선순위:
 
 ```text
-(Line)-[:HAS_STOP {seq}]->(Stop)
-(Load {date, hour, count})-[:AT]->(Stop)
-(Load)-[:AFFECTS]->(Line)
+fresh RealtimeObservation
+  -> exact historical LoadObservation
+  -> existing LoadProfile
+  -> UNKNOWN / 데이터 부족
 ```
 
-`Line.id`, `Stop.id`, `Load.id`에는 고유 제약이 있습니다. Load ID는 `노선|정류장|날짜|시간`으로 안정적으로 만들어져 같은 CSV를 다시 처리해도 새 노드나 관계가 중복 생성되지 않습니다.
+Realtime importer와 profile 생성 batch는 아직 없으므로 실사용은 exact historical 또는 unknown이다. 예시로 B1 대전역 08시는 17명, 09시는 24명이다. 08시 상대 percentile 약 56.6은 `MEDIUM/보통`이며 탑승 확률이 아니다.
 
-- `compose.yaml`: Neo4j 컨테이너를 어떻게 만들지 정의하는 재현 가능한 설정입니다.
-- Docker 컨테이너: Neo4j 프로그램이 실행되는 교체 가능한 프로세스/파일시스템입니다.
-- Docker 명명 볼륨: 실제 `/data`와 `/logs`가 남는 별도 저장소입니다. 컨테이너를 멈추거나 재생성해도 볼륨은 유지됩니다.
+## 5. 좌표와 Kakao Map
 
-Compose는 고정 `container_name`이나 고정 외부 볼륨 이름을 쓰지 않습니다. 볼륨의 실제 이름은 Compose 프로젝트명에 따라 `<project>_neo4j_data`처럼 만들어집니다. 따라서 별도 디렉터리 또는 `COMPOSE_PROJECT_NAME`을 사용하면 기존 환경과 테스트 환경이 공유되지 않습니다. 어떤 스크립트도 `docker compose down -v`를 실행하지 않습니다.
+브라우저는 Kakao place 검색 좌표를 API로 전달하고 출발·도착 marker를 표시한다. Backend는 좌표가 매핑된 routeable Stop이 있으면 2 km 이내 후보를 먼저 사용하고, 현재처럼 좌표 graph가 비어 있으면 정류장명 후보로 fallback한다.
 
-기존 볼륨은 최초 생성 시의 Neo4j 인증정보를 보존합니다. `.env`의 `NEO4J_PASS`를 바꾸고 컨테이너 환경을 다시 주입해도 기존 DB 사용자의 비밀번호는 바뀌지 않습니다. health 실패 시 볼륨을 삭제하지 말고 기존 인증정보를 복구하거나 Neo4j 공식 비밀번호 변경 절차를 사용해야 합니다.
+Historical Stop에는 공식 ID/좌표 mapping이 아직 없어 기본 graph의 route geometry는 `UNAVAILABLE`이다. 선택 경로의 모든 occurrence에 검증된 좌표가 있을 때만 `STOP_TO_STOP_APPROXIMATION`을 반환하고 프런트가 polyline을 그린다. 이는 정류장 좌표를 순서대로 이은 선이지 공식 도로 shape나 실제 차량 궤적이 아니다.
 
-CSV 상세와 라이선스 상태는 `docs/DATA_SOURCES.md`에 있습니다.
+전국 정류장 CSV/TAGO adapter는 구현되어 있지만 실제 파일·key는 `NOT_CONFIGURED`다. Official 데이터를 적재해도 historical occurrence에 자동 이름 병합하지 않으므로 별도 검증 mapping이 필요하다.
 
-## 5. 설정 파일과 비밀정보
+## 6. 주요 파일
 
-- `.env`: 현재 PC에서만 쓰는 실제 키, 비밀번호, 포트, 모델/캐시 설정입니다. Git 제외 대상입니다.
-- `.env.example`: 필요한 변수 이름과 안전한 기본/플레이스홀더만 보여 주는 추적 파일입니다.
-- `.gitignore`: `.env`, 가상환경, 모델, 캐시, 로그, PID, 임시 파일을 Git 대상에서 제외합니다.
+- `app.py`: FastAPI models, `/health`, `/api/predict`, frontend config/static 제공
+- `service.py`: v2 route 후보와 결과 구성, EXAONE grounding/fallback
+- `prediction_v2.py`: Neo4j read repository, direct route, geometry, congestion precedence
+- `data_insert_v2.py`: 무손실 historical ETL, idempotent import/verify
+- `public_data.py`: 선택적 전국 정류장 CSV/TAGO adapter와 CLI
+- `llm_server.py`: 로컬 EXAONE `/health`, `/generate`
+- `static/index.html`: 입력, Kakao 검색/지도, v2 결과 카드
+- `compose.yaml`: 보존된 v1과 격리된 v2 Neo4j service/volume
+- `scripts/setup.ps1`, `start.ps1`, `stop.ps1`, `verify.ps1`: 재현 가능한 운영·검증
 
-카카오 JavaScript 키는 브라우저가 받아야 하므로 비밀값으로 숨길 수 없습니다. 소스/Git에 직접 넣지 않고 런타임에 전달하되 Kakao Developers에서 허용 도메인을 제한합니다. Neo4j 비밀번호는 브라우저로 전달되지 않습니다.
+Graph schema와 count는 [NEO4J_V2.md](NEO4J_V2.md), 계산 계약은 [PREDICTION_DESIGN.md](PREDICTION_DESIGN.md), 출처/설정은 [DATA_SOURCES.md](DATA_SOURCES.md)를 참고한다.
 
-주요 환경변수:
-
-| 그룹 | 변수 | 사용 위치 |
-|---|---|---|
-| Neo4j | `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASS` | Compose, service, ETL, 검증 |
-| Neo4j 포트 | `NEO4J_HTTP_PORT`, `NEO4J_BOLT_PORT` | Compose 호스트 포트 |
-| 모델 | `MODEL_ID`, `HF_HOME`, `MODEL_PATH`, `HF_HUB_OFFLINE`, `MAX_NEW_TOKENS` | 모델 다운로드/LLM 서버 |
-| 서버 | `LLM_BASE_URL`, `APP_HOST`, `APP_PORT`, `LLM_HOST`, `LLM_PORT` | 두 FastAPI 프로세스/검증 |
-| 프런트 | `KAKAO_MAP_JAVASCRIPT_KEY` | `/api/frontend-config`와 지도 SDK |
-| 데이터 | `TARGET_DATE` | API 기본 요청 날짜(현재 계산에는 미사용) |
-
-## 6. 새 PC 설치
-
-1. 저장소를 내려받고 PowerShell에서 프로젝트 루트로 이동합니다.
-2. Docker Desktop을 실행합니다.
-3. `powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1`을 실행합니다.
-4. `.env`가 새로 생기면 비밀번호와 카카오 JavaScript 키를 채웁니다. 기존 `.env`는 덮어쓰지 않습니다.
-5. 같은 setup 명령을 다시 실행합니다.
-
-setup은 Python 3.12 격리 가상환경, 고정 패키지, CUDA 12.8 PyTorch, Neo4j healthy 대기, DB 상태 분류/빈 DB 적재, 모델 다운로드, CUDA 모델 로드, 최소 추론과 전체 API 검증을 수행합니다. 완전 DB에서는 적재를 생략하고 부분 DB에서는 중단합니다. 성공하면 서비스가 실행 중입니다.
-
-모델을 이미 내려받아야 하는 폐쇄 환경에서는 `.env`의 `HF_HUB_OFFLINE=1`을 사용합니다. 캐시가 불완전하면 검증이 실패합니다. CPU 실행은 매우 느리며 의도적으로 사용할 때만 setup/verify에 `-AllowCpu`를 전달합니다.
-
-## 7. 평상시 시작과 종료
-
-`scripts/start.ps1`은 Neo4j를 먼저 healthy까지 시작하고 EXAONE 서버, 앱 서버 순으로 별도 숨김 프로세스를 띄웁니다. `.run`의 PID와 실제 명령줄을 함께 검사해 중복 실행과 다른 프로세스 인수를 방지하며, stdout/stderr는 `logs`에 분리합니다.
-
-`scripts/stop.ps1`은 PID와 스크립트 경로가 일치하는 이 프로젝트 프로세스만 종료합니다. PID 파일이 없는 임의 Python 프로세스는 건드리지 않습니다. 마지막에 `docker compose stop neo4j`만 실행하므로 컨테이너와 모든 명명 볼륨은 남습니다.
-
-## 8. 검증과 테스트
-
-전체 통합 검증:
+## 7. 새 PC 설치와 평상시 실행
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
+# 저장소 루트 D:\sun에서 실행
+powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 ```
 
-검증 항목은 `.env` 필수 변수(값 미출력), Python 3.12, 패키지 버전, PyTorch CUDA 빌드, GPU, 로컬 모델 스냅샷, Neo4j 컨테이너/데이터/관계/대표 조회, LLM health와 최소 추론, FastAPI health/docs, frontend-config, 지도 SDK 설정 경로, 고정 데모 예측 스모크, Node 기반 인라인 JavaScript 문법입니다. 실패하면 종료 코드 1입니다.
+처음에는 `.env.example`을 `.env`로 복사하고 중단한다. 최소 `NEO4J_PASS`, `KAKAO_MAP_JAVASCRIPT_KEY`를 실제 값으로 바꾼 뒤 같은 setup 명령을 다시 실행한다. 기존 `.env`와 Docker volume은 덮어쓰거나 삭제하지 않는다.
 
-외부 서버 없이 실행하는 단위 테스트:
+Setup은 Python 3.12 venv, 고정 의존성/CUDA PyTorch, v1/v2 Neo4j, historical ETL, EXAONE snapshot/server, FastAPI와 통합 검증을 준비한다. CPU만 의도적으로 사용할 때는 `-AllowCpu`, 기존 model을 사용할 때는 필요에 따라 `-SkipModelDownload`를 쓴다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\stop.ps1
+```
+
+서비스 주소는 웹/API docs/EXAONE이 각각 8000, 8000/docs, 8001이며 Neo4j v1/v2 Browser는 7474/7475다. `stop.ps1`은 이 프로젝트가 시작한 Python 프로세스와 컨테이너만 정지하며 volume을 삭제하지 않는다.
+
+## 8. 선택적 공식 데이터 설정
+
+상태 확인:
+
+```powershell
+.\.venv\Scripts\python.exe .\public_data.py status
+```
+
+TAGO는 data.go.kr에서 서비스 키와 공식 city/route ID를 얻고 `D:\sun\.env`에 아래 값을 넣는다.
+
+```dotenv
+DATA_GO_KR_SERVICE_KEY=<your key>
+```
+
+```powershell
+.\.venv\Scripts\python.exe .\public_data.py fetch-tago --city-code <official-city-code> --route-id <official-route-id>
+# 검증 후 staging 적재
+.\.venv\Scripts\python.exe .\public_data.py fetch-tago --city-code <official-city-code> --route-id <official-route-id> --import-to-neo4j
+```
+
+전국 정류장 위치 CSV는 공식 data.go.kr 파일을 `D:\sun\data\public\national_bus_stops\*.csv`에 둔다.
+
+```powershell
+.\.venv\Scripts\python.exe .\public_data.py validate-national
+.\.venv\Scripts\python.exe .\public_data.py import-national
+```
+
+상세 공식 링크와 `NOT_CONFIGURED`/`NOT_IMPLEMENTED` 구분은 [DATA_SOURCES.md](DATA_SOURCES.md)에 있다. 실제 secret을 문서·로그·테스트에 넣지 않는다.
+
+## 9. 테스트와 장애 확인
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
-.\.venv\Scripts\python.exe -m compileall -q app.py service.py config.py llm_server.py data_insert.py scripts tests
+.\.venv\Scripts\python.exe -m compileall -q app.py service.py prediction_v2.py public_data.py tests
+powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 ```
 
-실제 Neo4j/LLM/FastAPI를 쓰는 검증은 `verify.ps1`이 담당합니다. `data_insert.py --status`는 DB를 읽기만 하며 완전 상태가 아니면 0이 아닌 종료 코드를 반환합니다. `data_insert.py` 기본 실행도 완전 DB에서는 적재를 건너뛰고, 부분 상태에서는 중단합니다.
+`verify.ps1`은 config, Python/GPU/model, v1/v2 컨테이너와 graph count/B1 path, JavaScript, EXAONE/FastAPI/API를 검사한다. 외부 공식 data key/file 부재는 historical 동작을 막지 않는다.
 
-## 9. 장애 확인 순서
+장애 확인 순서:
 
-1. `scripts\verify.ps1`의 첫 실패 단계와 종료 코드를 확인합니다.
-2. `docker info`, `docker compose ps`, `docker compose logs neo4j`로 Docker/Neo4j를 확인합니다.
-3. 기존 볼륨 인증 오류라면 `.env` 변경으로 DB 비밀번호가 바뀌지 않는다는 점을 확인합니다. 볼륨 삭제로 우회하지 않습니다.
-4. `logs\llm_server.stderr.log`에서 CUDA/모델 캐시 오류를 확인합니다.
-5. `logs\app.stderr.log`에서 Neo4j/LLM 연결 오류를 확인합니다.
-6. 지도만 실패하면 `/api/frontend-config`, 카카오 허용 도메인, 인터넷 연결을 확인합니다. 키 값을 로그나 이슈에 붙이지 않습니다.
-7. 부분 DB로 판정되면 자동 재적재/삭제하지 말고 별도 백업 후 원인을 조사합니다.
+1. `verify.ps1`의 첫 실패 단계와 `logs\*.stderr.log`를 확인한다.
+2. `docker compose --profile v2 ps`와 각 Neo4j log를 확인한다.
+3. 기존 volume 비밀번호가 `.env` 변경으로 바뀌지 않는 점을 확인하고 volume 삭제로 우회하지 않는다.
+4. 지도만 실패하면 `/api/frontend-config`와 Kakao 허용 도메인을 확인한다.
+5. 공식 데이터는 `public_data.py status`로 별도 확인한다.
 
-## 10. 파일 트리
+## 10. 남은 제한
 
-```text
-RideSure/
-├─ app.py                         웹/API FastAPI 서버
-├─ service.py                     고정 데모 응답, Neo4j 조회 함수, LLM 호출
-├─ config.py                      .env 로드와 값 미노출 검증
-├─ llm_server.py                  EXAONE 설명문 생성 서버
-├─ data_insert.py                 CSV ETL, DB 상태 분류와 검증
-├─ compose.yaml                   Neo4j 컨테이너/명명 볼륨
-├─ requirements.txt               검증된 Python 패키지 버전
-├─ requirements-lock.txt          콜드 스타트에서 고정한 전체 의존성
-├─ requirements-cuda.txt          CUDA 12.8 PyTorch 버전
-├─ .env.example                   안전한 설정 예시
-├─ .gitignore                     비밀/대용량/런타임 파일 제외
-├─ README.md                      사용자 빠른 시작
-├─ doit.txt                       네 명령 요약 메모
-├─ static/
-│  └─ index.html                  입력 UI, 결과 카드, 카카오 지도
-├─ scripts/
-│  ├─ setup.ps1                   최초 설치와 최종 통합 검증
-│  ├─ start.ps1                   전체 서비스 시작
-│  ├─ stop.ps1                    프로젝트 소유 프로세스 안전 종료
-│  ├─ verify.ps1                  상태/구성/스모크 검증
-│  ├─ common.ps1                  PowerShell 공통 PID/health 함수
-│  ├─ checks.py                   값 미노출 Python 검증 CLI
-│  └─ download_model.py           Hugging Face 모델 준비
-├─ tests/
-│  └─ test_unit.py                외부 서버 없는 단위 테스트
-├─ docs/
-│  ├─ PROJECT_GUIDE.md            이 문서
-│  └─ DATA_SOURCES.md             CSV 스키마/해시/라이선스 상태
-└─ 노선·정류장 지표… (1~3).csv    복구된 원본 데이터 분할 파일
-```
+- B1 공식 route/stop ID와 historical occurrence mapping 미완료
+- historical route coordinates 0, 기본 polyline 없음
+- transfer routing, 공식 road shape, defensible travel time 미구현
+- realtime importer/profile builder 미구현
+- 탑승 확률 계산에 필요한 capacity/waiting/boarding ground truth 없음
+- historical CSV 원 출처와 재배포 license 미확인
 
-`.venv`, `.cache`, `.run`, `logs`, `.env`, Docker 볼륨은 실행 중 생성되지만 Git 파일 트리에는 포함되지 않습니다.
-
-## 11. 실제 예측 구현의 다음 단계
-
-후속 `feature/neo4j-prediction`에서는 요구사항과 정답 기준을 먼저 정한 뒤 다음을 별도 테스트와 함께 연결해야 합니다.
-
-1. 입력 위치를 정류장 ID에 안정적으로 매핑하고 동명이인/검색 순서를 처리합니다.
-2. HAS_STOP의 방향과 정류장 순번으로 실제 이동 가능한 노선을 찾습니다.
-3. 요청 날짜/시간의 Load를 노선·정류장에 결합합니다.
-4. 탑승 확률의 의미, 학습/휴리스틱 근거, 평가 지표를 정의합니다.
-5. 누락 데이터와 환승을 처리하고 결과가 입력에 따라 달라지는 테스트를 추가합니다.
-6. 계산 결과만 EXAONE에 전달하고, LLM이 수치를 발명하지 못하게 응답을 검증합니다.
-
-그 전까지 UI/API/문서는 반드시 “고정 데모”라고 표시해야 합니다.
+이 제한은 가짜 값을 만들어 숨기지 않고 API의 nullable/unknown 상태와 문서에 드러낸다.

@@ -21,14 +21,16 @@ try {
 
     docker info *> $null
     Assert-LastExitCode "Docker Desktop check"
-    $composeStatus = docker compose ps --status running --format json neo4j
+    $composeStatus = docker compose --profile v2 ps --status running --format json neo4j neo4j-v2
     Assert-LastExitCode "Neo4j container status"
     if ([string]::IsNullOrWhiteSpace(($composeStatus | Out-String))) {
-        throw "Neo4j is not running. Run scripts/start.ps1 first."
+        throw "Neo4j v1/v2 is not running. Run scripts/start.ps1 first."
     }
 
     & $script:VenvPython -m scripts.checks database
     Assert-LastExitCode "Neo4j data verification"
+    & $script:VenvPython -m scripts.checks database-v2
+    Assert-LastExitCode "Neo4j v2 data and B1 verification"
     & $script:VenvPython -m scripts.checks javascript
     Assert-LastExitCode "index.html JavaScript syntax verification"
 

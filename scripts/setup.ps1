@@ -83,14 +83,16 @@ Assert-Exit "Python dependency installation"
 & $VenvPython -m scripts.checks config
 Assert-Exit "Configuration validation"
 
-Write-Host "Starting Neo4j without deleting or recreating named volumes..."
-docker compose up -d --wait neo4j
+Write-Host "Starting Neo4j v1/v2 without deleting or recreating named volumes..."
+docker compose --profile v2 up -d --wait neo4j neo4j-v2
 if ($LASTEXITCODE -ne 0) {
-    throw "Neo4j startup failed. Existing-volume credentials may differ from .env. NEO4J_AUTH cannot change an existing volume password; no volume was deleted."
+    throw "Neo4j v1/v2 startup failed. Existing-volume credentials may differ from .env; no volume was deleted."
 }
 
 & $VenvPython data_insert.py
 Assert-Exit "Empty/complete/partial database inspection and CSV import"
+& $VenvPython data_insert_v2.py import
+Assert-Exit "Neo4j v2 historical graph import and verification"
 
 if (-not $SkipModelDownload) {
     & $VenvPython -m scripts.download_model

@@ -28,3 +28,6 @@ pytorch_model*.bin
 *.gguf
 .coverage
 htmlcov/
+
+# Manually downloaded public-data source files
+data/public/national_bus_stops/*.csv

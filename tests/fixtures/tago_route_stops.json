@@ -1,0 +1,26 @@
+{
+  "fixture_kind": "synthetic-schema-fixture",
+  "items": [
+    {
+      "routeid": "TEST_ROUTE_001",
+      "nodeid": "TEST_NODE_001",
+      "nodenm": "테스트 정류장 1",
+      "nodeno": "00001",
+      "nodeord": 1,
+      "gpslati": 36.3504,
+      "gpslong": 127.3845,
+      "updowncd": "TEST_DIRECTION",
+      "citycode": "TEST"
+    },
+    {
+      "routeid": "TEST_ROUTE_001",
+      "nodeid": "TEST_NODE_002",
+      "nodenm": "테스트 정류장 2",
+      "nodeno": "00002",
+      "nodeord": 2,
+      "gpslati": 36.3510,
+      "gpslong": 127.3900,
+      "citycode": "TEST"
+    }
+  ]
+}

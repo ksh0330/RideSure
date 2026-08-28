@@ -1,410 +1,372 @@
-# service.py
-"""
-Neo4j + LLM 통합 서비스 레이어
-FastAPI와 기존 query_utils, LLM 코드를 연결
-"""
-from typing import List, Dict, Optional, Tuple
-from neo4j import GraphDatabase
+"""Neo4j v2 routing/congestion service with EXAONE explanation fallback."""
+
+from __future__ import annotations
+
+import json
 import logging
+import re
 from datetime import datetime
+from typing import Any, Iterable
+
+import requests
+from neo4j import GraphDatabase
 
 import config
+from prediction_v2 import V2TransitRepository
+
 
 logger = logging.getLogger(__name__)
 
-class BusPredictionService:
-    def __init__(self):
-        config.validate_required_config(("neo4j", "llm_client"))
-        self.driver = GraphDatabase.driver(
-            config.NEO4J_URI,
-            auth=(config.NEO4J_USER, config.NEO4J_PASS)
-        )
-        # TODO: LLM 초기화
-        # self.llm = initialize_llm()
 
-    def close(self):
+def _present(value: Any) -> bool:
+    return value is not None and value != ""
+
+
+class BusPredictionService:
+    """Build a structured result from v2 facts, then ask EXAONE to phrase it."""
+
+    def __init__(self, driver: Any | None = None, repository: Any | None = None):
+        config.validate_required_config(("neo4j_v2", "llm_client"))
+        self.driver = driver or GraphDatabase.driver(
+            config.NEO4J_V2_URI,
+            auth=(config.NEO4J_USER, config.NEO4J_PASS),
+        )
+        self.repository = repository or V2TransitRepository(self.driver)
+
+    def close(self) -> None:
         self.driver.close()
 
     def check_connection(self) -> bool:
-        """Neo4j에 실제로 간단한 쿼리를 실행해 연결 상태를 확인한다."""
         try:
             with self.driver.session() as session:
-                session.run("RETURN 1 AS ok").single(strict=True)
-            return True
+                record = session.run(
+                    "MATCH (n:LoadObservation) RETURN count(n) AS count"
+                ).single(strict=True)
+            return int(record["count"]) > 0
         except Exception as exc:
-            logger.warning("Neo4j 연결 확인 실패: %s", exc)
+            logger.warning("Neo4j v2 connection check failed: %s", exc)
             return False
 
-    def find_nearest_stop(self, location_name: str) -> Optional[Dict]:
-        """
-        위치 이름으로 가장 가까운 정류장 찾기
-
-        Args:
-            location_name: 위치 이름 (예: "대전역", "세종시청")
-
-        Returns:
-            {"stop_id": "...", "stop_name": "...", "lat": ..., "lon": ...}
-        """
-        query = """
-        MATCH (s:Stop)
-        WHERE s.name CONTAINS $location
-        RETURN s.id AS stop_id, s.name AS stop_name
-        LIMIT 5
-        """
-
-        with self.driver.session() as session:
-            result = session.run(query, location=location_name)
-            stops = [dict(record) for record in result]
-
-            if stops:
-                logger.info(f"'{location_name}' 검색 결과: {len(stops)}개")
-                return stops[0]  # 첫 번째 매칭 결과 반환
-            else:
-                logger.warning(f"'{location_name}'에 해당하는 정류장을 찾을 수 없음")
-                return None
-
-    def find_routes_between_stops(
-        self,
-        origin_stop_id: str,
-        dest_stop_id: str
-    ) -> List[Dict]:
-        """
-        두 정류장 사이의 버스 노선 찾기
-        (현재는 데모용 하드코딩을 쓰기 때문에 사용하지 않음)
-        """
-        query = """
-        MATCH (origin:Stop {id: $origin_id})<-[:HAS_STOP]-(line:Line)-[:HAS_STOP]->(dest:Stop {id: $dest_id})
-        MATCH (line)-[r:HAS_STOP]->(stop:Stop)
-        WITH line, origin, dest, r, stop
-        ORDER BY r.seq
-        RETURN
-            line.id AS line_id,
-            line.name AS line_name,
-            collect(stop.name) AS stops,
-            collect(stop.id) AS stop_ids
-        LIMIT 10
-        """
-
-        with self.driver.session() as session:
-            result = session.run(
-                query,
-                origin_id=origin_stop_id,
-                dest_id=dest_stop_id
-            )
-            routes = [dict(record) for record in result]
-            logger.info(f"경로 탐색 결과: {len(routes)}개")
-            return routes
-
-    def get_route_load_data(
-        self,
-        line_id: str,
-        stop_id: str,
-        date: str,
-        hour: int
-    ) -> Dict:
-        """
-        특정 노선/정류장의 시간대별 승객 데이터 조회
-        (현재는 데모용 하드코딩을 쓰기 때문에 사용하지 않음)
-        """
-        query = """
-        MATCH (ld:Load)-[:AT]->(s:Stop {id: $stop_id})
-        MATCH (ld)-[:AFFECTS]->(l:Line {id: $line_id})
-        WHERE ld.date = $date AND ld.hour = $hour
-        RETURN ld.count AS count
-        """
-
-        with self.driver.session() as session:
-            result = session.run(
-                query,
-                stop_id=stop_id,
-                line_id=line_id,
-                date=date,
-                hour=hour
-            )
-            record = result.single()
-
-            if record:
-                return {
-                    "line_id": line_id,
-                    "stop_id": stop_id,
-                    "date": date,
-                    "hour": hour,
-                    "count": record["count"]
-                }
-            else:
-                # 데이터가 없는 경우 0 반환
-                return {
-                    "line_id": line_id,
-                    "stop_id": stop_id,
-                    "date": date,
-                    "hour": hour,
-                    "count": 0
-                }
-
-    def calculate_boarding_probability(
-        self,
-        route: Dict,
-        load_data: Dict,
-        time_of_day: int
-    ) -> float:
-        """
-        탑승 확률 계산 (간단한 휴리스틱)
-        """
-        passenger_count = load_data.get("count", 0)
-
-        # 간단한 규칙 기반 계산
-        # 승객 수가 적을수록 탑승 확률 높음
-        if passenger_count < 30:
-            return 90.0
-        elif passenger_count < 50:
-            return 75.0
-        elif passenger_count < 70:
-            return 50.0
+    @staticmethod
+    def _parse_inputs(departure_time: str | None, service_date: str) -> tuple[int, str]:
+        if departure_time:
+            try:
+                hour = datetime.strptime(departure_time, "%H:%M").hour
+            except ValueError as exc:
+                raise ValueError("departure_time must use HH:MM") from exc
         else:
-            return 25.0
+            hour = 9
+        try:
+            parsed_date = datetime.strptime(service_date, "%Y-%m-%d").date().isoformat()
+        except ValueError as exc:
+            raise ValueError("date must use YYYY-MM-DD") from exc
+        return hour, parsed_date
+
+    @staticmethod
+    def _candidate_name(candidate: dict[str, Any]) -> str | None:
+        value = candidate.get("name") or candidate.get("stop_name")
+        return str(value).strip() if value else None
+
+    def _stop_candidates(
+        self,
+        text: str,
+        latitude: float | None,
+        longitude: float | None,
+    ) -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
+        if latitude is not None and longitude is not None:
+            candidates.extend(
+                self.repository.find_nearby_stops(
+                    latitude,
+                    longitude,
+                    radius_m=2_000,
+                    max_results=8,
+                )
+            )
+        # Historical topology is name-only until official mappings are verified.
+        # Text candidates keep the historical fallback usable when official data
+        # or coordinates are not configured.
+        candidates.extend(self.repository.find_stops_by_name(text, limit=8))
+
+        deduplicated: list[dict[str, Any]] = []
+        seen: set[tuple[str | None, str]] = set()
+        for candidate in candidates:
+            name = self._candidate_name(candidate)
+            if not name:
+                continue
+            key = (candidate.get("stop_id"), name)
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized = dict(candidate)
+            normalized["name"] = name
+            deduplicated.append(normalized)
+        return deduplicated
+
+    @staticmethod
+    def _normalize_stop(stop: dict[str, Any]) -> dict[str, Any]:
+        name = stop.get("name") or stop.get("stop_name")
+        if not name:
+            raise ValueError("Route contains a stop without a name")
+        normalized = {
+            "stop_id": stop.get("stop_id"),
+            "occurrence_id": stop.get("occurrence_id"),
+            "name": str(name),
+            "seq": stop.get("seq"),
+            "lat": stop.get("lat"),
+            "lon": stop.get("lon"),
+            "distance_m": stop.get("distance_m"),
+        }
+        return normalized
+
+    @staticmethod
+    def _geometry_from_stops(stops: Iterable[dict[str, Any]]) -> list[dict[str, float]]:
+        geometry = [
+            {"lat": float(stop["lat"]), "lon": float(stop["lon"])}
+            for stop in stops
+            if _present(stop.get("lat")) and _present(stop.get("lon"))
+        ]
+        return geometry if len(geometry) >= 2 else []
+
+    def _route_candidates(
+        self,
+        origin_candidates: list[dict[str, Any]],
+        destination_candidates: list[dict[str, Any]],
+    ) -> list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]]:
+        candidates: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = []
+        for origin in origin_candidates[:8]:
+            for destination in destination_candidates[:8]:
+                if origin["name"] == destination["name"]:
+                    continue
+                direct_routes = self.repository.find_direct_routes(
+                    origin["name"], destination["name"], limit=20
+                )
+                for route in direct_routes:
+                    candidates.append((route, origin, destination))
+
+        def rank(item: tuple[dict[str, Any], dict[str, Any], dict[str, Any]]) -> tuple:
+            route, origin, destination = item
+            distance = float(origin.get("distance_m") or 0) + float(
+                destination.get("distance_m") or 0
+            )
+            coordinate_rank = 0 if origin.get("distance_m") is not None else 1
+            return (coordinate_rank, distance, int(route.get("hops") or 0))
+
+        candidates.sort(key=rank)
+        # A repeated stop can create several paths within one pattern. Keep the
+        # shortest/best candidate for each pattern rather than presenting a loop
+        # around the same line as an alternative route.
+        result: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = []
+        seen_patterns: set[str] = set()
+        for item in candidates:
+            pattern_id = str(item[0]["pattern_id"])
+            if pattern_id in seen_patterns:
+                continue
+            seen_patterns.add(pattern_id)
+            result.append(item)
+            if len(result) == 3:
+                break
+        return result
+
+    def _build_route_result(
+        self,
+        route: dict[str, Any],
+        origin_candidate: dict[str, Any],
+        destination_candidate: dict[str, Any],
+        service_date: str,
+        hour: int,
+    ) -> dict[str, Any]:
+        congestion = self.repository.resolve_congestion(
+            str(route["pattern_id"]),
+            str(route["origin_occurrence_id"]),
+            service_date,
+            hour,
+        )
+        stops = [self._normalize_stop(stop) for stop in route.get("stops", [])]
+        if not stops:
+            raise ValueError("Neo4j returned an empty direct route")
+        if origin_candidate.get("distance_m") is not None:
+            stops[0]["distance_m"] = origin_candidate["distance_m"]
+        if destination_candidate.get("distance_m") is not None:
+            stops[-1]["distance_m"] = destination_candidate["distance_m"]
+
+        route_geometry = route.get("geometry") or self._geometry_from_stops(stops)
+        geometry = [
+            {"lat": float(point["lat"]), "lon": float(point["lon"])}
+            for point in route_geometry
+            if _present(point.get("lat")) and _present(point.get("lon"))
+        ]
+        geometry_kind = route.get("geometry_kind") or (
+            "STOP_TO_STOP_APPROXIMATION" if geometry else "UNAVAILABLE"
+        )
+        return {
+            "line_id": str(route["line_id"]),
+            "line_name": str(route["line_name"]),
+            "pattern_id": str(route["pattern_id"]),
+            "terminal_description": route.get("terminal_description"),
+            "origin_stop": stops[0],
+            "destination_stop": stops[-1],
+            "stops": stops,
+            "geometry": geometry,
+            "geometry_kind": geometry_kind,
+            "onboard_count": congestion["onboard_count"],
+            "relative_percentile": congestion["relative_percentile"],
+            "congestion_level": congestion["congestion_level"],
+            "boarding_guidance": congestion["boarding_guidance"],
+            "evidence_source": congestion["source"],
+            "congestion_status": congestion["status"],
+            "service_date": congestion.get("service_date") or service_date,
+            "hour": congestion.get("hour", hour),
+            "sample_size": int(congestion.get("sample_size") or 0),
+            "boarding_probability": None,
+            "expected_load": None,
+            "travel_time": None,
+        }
+
+    @staticmethod
+    def _fallback_explanation(routes: list[dict[str, Any]]) -> str:
+        if not routes:
+            return "현재 데이터에서 이용 가능한 직접 노선을 찾지 못했습니다."
+        route = routes[0]
+        origin = route["origin_stop"]["name"]
+        destination = route["destination_stop"]["name"]
+        if route["evidence_source"] == "HISTORICAL_OBSERVATION":
+            percentile = route.get("relative_percentile")
+            percentile_text = (
+                f", 동일 패턴 기준 상대 percentile은 {percentile:.1f}입니다"
+                if percentile is not None
+                else ""
+            )
+            return (
+                f"{route['line_name']} 직행 경로({origin} → {destination})를 안내합니다. "
+                f"{route['hour']:02d}시 historical 재차인원은 "
+                f"{route['onboard_count']}명이고{percentile_text}. "
+                f"상대 혼잡 안내는 '{route['boarding_guidance']}'이며 탑승 확률을 뜻하지 않습니다."
+            )
+        return (
+            f"{route['line_name']} 직행 경로({origin} → {destination})를 안내합니다. "
+            "선택한 날짜와 시간의 재차인원 근거가 없어 혼잡 안내는 데이터 부족입니다."
+        )
+
+    @staticmethod
+    def _llm_output_is_grounded(text: str, facts: dict[str, Any]) -> bool:
+        if not text or len(text) > 500 or "%" in text or "탑승 확률" in text:
+            return False
+        best = facts["recommended_route"]
+        if best["line_name"] not in text or best["boarding_guidance"] not in text:
+            return False
+        allowed_numbers = set(
+            re.findall(r"\d+(?:\.\d+)?", json.dumps(facts, ensure_ascii=False))
+        )
+        output_numbers = set(re.findall(r"\d+(?:\.\d+)?", text))
+        return output_numbers.issubset(allowed_numbers)
 
     def predict_with_llm(
         self,
-        routes: List[Dict],
-        load_data_list: List[Dict],
+        routes: list[dict[str, Any]],
         origin: str,
         destination: str,
-        departure_time: Optional[str] = None
-    ) -> Dict:
-        """
-        LLM을 사용한 경로 추천 및 추론
-
-        LLM 서버(localhost:8001)에 요청을 보내서 추론 결과를 받아옴
-        """
-        import requests
-        import json
-
-        # 프롬프트 구성
-        route_info = "\n".join([
-            f"- {r['line_name']}: 승객 {ld.get('count', 0)}명 (탑승 확률 {r.get('boarding_probability', 0):.0f}%)"
-            for r, ld in zip(routes, load_data_list)
-        ])
-
-        prompt = f"""
-다음은 버스 탑승 예측 분석 요청입니다.
-
-출발지: {origin}
-도착지: {destination}
-출발 시각: {departure_time if departure_time else '현재 시각'}
-
-이용 가능한 노선(대전 → 세종시청):
-
-{route_info}
-
-질문:
-B1번 노선을 추천하고 그 이유를 말하세요
-
-200자 이내로 간단명료하게 답변해주세요.
-"""
-
+    ) -> str:
+        fallback = self._fallback_explanation(routes)
+        best = routes[0]
+        facts = {
+            "origin_input": origin,
+            "destination_input": destination,
+            "recommended_route": {
+                "line_name": best["line_name"],
+                "origin_stop": best["origin_stop"]["name"],
+                "destination_stop": best["destination_stop"]["name"],
+                "service_date": best["service_date"],
+                "hour": best["hour"],
+                "onboard_count": best["onboard_count"],
+                "relative_percentile": best["relative_percentile"],
+                "congestion_level": best["congestion_level"],
+                "boarding_guidance": best["boarding_guidance"],
+                "evidence_source": best["evidence_source"],
+            },
+            "alternative_lines": [route["line_name"] for route in routes[1:]],
+        }
+        prompt = (
+            "다음 JSON의 사실만 사용해 200자 이내 한국어 버스 안내를 작성하세요. "
+            "노선, 정류장, 수치, 좌표를 추가하거나 추측하지 마세요. "
+            "재차인원과 상대 혼잡 안내를 탑승 확률 또는 정원 대비 혼잡률로 표현하지 마세요. "
+            "추천 노선명과 boarding_guidance 표현을 반드시 그대로 포함하세요.\n"
+            + json.dumps(facts, ensure_ascii=False, sort_keys=True)
+        )
         try:
-            # LLM 서버에 요청
-            logger.info("🤖 LLM 서버에 추론 요청 중...")
-
             response = requests.post(
                 f"{config.LLM_BASE_URL}/generate",
                 json={
                     "prompt": prompt,
-                    "max_new_tokens": 200,
-                    "temperature": 0.7,
-                    "top_p": 0.9
+                    "max_new_tokens": min(config.MAX_NEW_TOKENS, 160),
+                    "temperature": 0.2,
+                    "top_p": 0.9,
                 },
-                timeout=120
+                timeout=120,
             )
-
-            if response.status_code == 200:
-                result = response.json()
-                reasoning = result.get("result", "").strip()
-
-                logger.info(f"✅ LLM 응답 수신: {reasoning[:100]}...")
-
-                # 대안 경로 추출 (간단한 휴리스틱)
-                alternatives = []
-                if "환승" in reasoning:
-                    alternatives.append("환승 경로를 고려해보세요")
-                if len(routes) > 1:
-                    alternatives.append(f"대안: {routes[1]['line_name']}")
-
-                return {
-                    "reasoning": reasoning,
-                    "alternatives": alternatives if alternatives else None
-                }
-            else:
-                logger.warning(f"⚠️ LLM 서버 응답 오류: {response.status_code}")
-                # Fallback: 규칙 기반
-                return self._fallback_reasoning(routes, origin, destination)
-
-        except requests.exceptions.Timeout:
-            logger.error("⏱️ LLM 서버 타임아웃")
-            return self._fallback_reasoning(routes, origin, destination)
-        except Exception as e:
-            logger.error(f"❌ LLM 요청 실패: {e}")
-            return self._fallback_reasoning(routes, origin, destination)
-
-    def _fallback_reasoning(self, routes: List[Dict], origin: str, destination: str) -> Dict:
-        """LLM 실패 시 Fallback 로직"""
-        if not routes:
-            return {
-                "reasoning": "이용 가능한 노선을 찾을 수 없습니다.",
-                "alternatives": None
-            }
-
-        best_route = routes[0]
-        reasoning = (
-            f"{best_route['line_name']}을(를) 추천합니다. "
-            f"탑승 확률이 {best_route.get('boarding_probability', 0):.0f}%로 가장 높고, "
-            f"예상 승객 수는 {best_route.get('expected_load', 0)}명입니다."
-        )
-
-        alternatives = []
-        if len(routes) > 1:
-            alternatives.append(f"대안: {routes[1]['line_name']}")
-
-        return {
-            "reasoning": reasoning,
-            "alternatives": alternatives if alternatives else None
-        }
+            response.raise_for_status()
+            text = str(response.json().get("result") or "").strip()
+            if self._llm_output_is_grounded(text, facts):
+                return text
+            logger.warning("EXAONE output failed structured grounding checks; using fallback")
+        except Exception as exc:
+            logger.warning("EXAONE explanation failed; using fallback: %s", exc)
+        return fallback
 
     def predict_boarding(
         self,
         origin: str,
         destination: str,
-        departure_time: Optional[str] = None,
-        date: str = "2025-11-08"
-    ) -> Dict:
-        """
-        전체 예측 파이프라인 (복구된 데모의 하드코딩 버전)
-
-        - 사용자 출발지/도착지/날짜는 계산에 사용하지 않음
-        - 출발 시각은 EXAONE 설명 프롬프트에만 전달됨
-        - 경로, 승객 수, 확률, 소요 시간은 두 경로로 고정됨
-        - Neo4j 조회 함수는 존재하지만 이 메서드에서 호출하지 않음
-        """
-        # ⏰ 시간 파싱 (UI에서 입력 받는 값 그대로 사용)
-        hour = 9  # 기본값
-        if departure_time:
-            try:
-                dt = datetime.strptime(departure_time, "%H:%M")
-                hour = dt.hour
-            except ValueError:
-                logger.warning(f"시간 파싱 실패: {departure_time}, 기본값 사용")
-
-        # ✅ 프롬프트용 출발/도착지 하드코딩
-        origin_fixed = "대전역"
-        destination_fixed = "세종시청,시의회,교육청"
-
-        # ✅ UI에 보여줄 경로 3개 하드코딩 (B1 포함)
-        routes = [
-            {
-                "line_id": "B1",
-                "line_name": "B1",
-                "boarding_probability": 70.0,
-                "expected_load": 20,
-                "stops": [
-  "대전역",
-  "한밭자이아파트",
-  "솔랑마을아파트",
-  "대덕구청",
-  "한남오거리(BRT)",
-  "오정동행정복지센터",
-  "오정농수산오거리",
-  "오정농수산시장",
-  "대덕산업단지",
-  "한국개발연구원(KDI)",
-  "소담동(새샘마을)",
-  "세종시청,시의회,교육청"
-],
-                "travel_time": 41,   # 분
-            },
-            {
-                "line_id": "202/613+1002",
-                "line_name": "101 / 1002 (환승 1회)",
-                "boarding_probability": 90.0,
-                "expected_load": 14,
-                "stops": [
-  "대전역",
-  "목척교",
-  "중앙로역6번출구",
-  "중구청역",
-  "대전청남부우정",
-  "서대전네거리역5번출구",
-  "중도일보",
-  "오룡역5번출구",
-  "용문역7번출구",
-  "용문역5번출구",
-  "서부농협본점",
-  "개나리아파트",
-  "대전삼성화의소",
-  "큰마을네거리",
-  "갈마육교",
-  "갈마네거리",
-  "대전일보사",
-  "월평삼거리",
-  "대전교통공사",
-  "만보교",
-  "유성온천역7번출구",
-  "온천교",
-  "충남대학교",
-  "장대네거리",
-  "죽동네거리",
-  "노은농수산물시장",
-  "월드컵경기장역",
-  "노은역",
-  "엑스포5.6단지",
-  "유성정류장",
-  "유성장애인복지관",
-  "지족역",
-  "송림마을1단지",
-  "반석역",
-
-  "반석마을입구(환승)",
-
-  "외삼삼거리",
-  "세종고속시외버스터미널",
-  "대평동(해들마을)",
-  "보람동(해들마을)",
-  "세종시청,시의회,교육청,세무서"
-]
-,
-                "travel_time": 82,
-            },
-        ]
-
-        # LLM 프롬프트에 넣을 승객 수 정보
-        load_data_list = [
-            {"count": r["expected_load"]} for r in routes
-        ]
-
-        # LLM 호출 (프롬프트에는 항상 대전역 → 세종시청)
-        llm_result = self.predict_with_llm(
-            routes,
-            load_data_list,
-            origin_fixed,
-            destination_fixed,
-            departure_time,
+        departure_time: str | None = None,
+        date: str = "2025-11-08",
+        origin_lat: float | None = None,
+        origin_lon: float | None = None,
+        destination_lat: float | None = None,
+        destination_lon: float | None = None,
+    ) -> dict[str, Any]:
+        origin = origin.strip()
+        destination = destination.strip()
+        if not origin or not destination:
+            raise ValueError("origin and destination are required")
+        hour, service_date = self._parse_inputs(departure_time, date)
+        origin_candidates = self._stop_candidates(origin, origin_lat, origin_lon)
+        destination_candidates = self._stop_candidates(
+            destination, destination_lat, destination_lon
         )
+        if not origin_candidates:
+            raise ValueError(f"출발지와 일치하는 정류장을 찾지 못했습니다: {origin}")
+        if not destination_candidates:
+            raise ValueError(f"도착지와 일치하는 정류장을 찾지 못했습니다: {destination}")
 
-        # FastAPI 응답 구조 맞춰서 리턴
+        direct = self._route_candidates(origin_candidates, destination_candidates)
+        if not direct:
+            raise ValueError("현재 Neo4j v2 데이터에서 이용 가능한 직접 노선을 찾지 못했습니다.")
+        routes = [
+            self._build_route_result(route, origin_stop, destination_stop, service_date, hour)
+            for route, origin_stop, destination_stop in direct
+        ]
+        explanation = self.predict_with_llm(routes, origin, destination)
+        alternatives = [
+            f"{route['line_name']}: {route['origin_stop']['name']} → "
+            f"{route['destination_stop']['name']}"
+            for route in routes[1:]
+        ]
         return {
             "success": True,
-            # 클라이언트에는 실제 입력값 대신 고정 출발/도착지를 보여주고 싶으면 origin_fixed 사용
-            "origin": origin_fixed,
-            "destination": destination_fixed,
+            "origin": origin,
+            "destination": destination,
             "routes": routes,
-            "reasoning": llm_result["reasoning"],
-            "alternatives": llm_result.get("alternatives"),
+            "reasoning": explanation,
+            "explanation": explanation,
+            "alternatives": alternatives,
+            "data_mode": "NEO4J_V2_HISTORICAL",
         }
 
-# 싱글톤 인스턴스
-_service_instance = None
+
+_service_instance: BusPredictionService | None = None
+
 
 def get_service() -> BusPredictionService:
-    """서비스 인스턴스 가져오기 (싱글톤)"""
     global _service_instance
     if _service_instance is None:
         _service_instance = BusPredictionService()
