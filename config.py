@@ -41,12 +41,19 @@ def _env_int(name: str, default: int) -> int:
         raise RuntimeError(f"{name} must be an integer (configured value was invalid).") from exc
 
 
+def _project_path(name: str, default: Path) -> str:
+    value = Path(_env(name, str(default))).expanduser()
+    return str(value if value.is_absolute() else PROJECT_ROOT / value)
+
+
 @dataclass(frozen=True)
 class Config:
     # Neo4j has no password default: credentials must come from .env/environment.
     NEO4J_URI: str = _env("NEO4J_URI")
     NEO4J_USER: str = _env("NEO4J_USER")
     NEO4J_PASS: str = _env("NEO4J_PASS")
+    # v2 uses a separate Docker service/volume while sharing local credentials.
+    NEO4J_V2_URI: str = _env("NEO4J_V2_URI", "bolt://127.0.0.1:7688")
 
     # Local EXAONE explanation server.
     MODEL_ID: str = _env("MODEL_ID")
@@ -66,12 +73,20 @@ class Config:
     LLM_PORT: int = _env_int("LLM_PORT", 8001)
     KAKAO_MAP_JAVASCRIPT_KEY: str = _env("KAKAO_MAP_JAVASCRIPT_KEY")
 
+    # Optional official reference data. The service key must never be logged.
+    DATA_GO_KR_SERVICE_KEY: str = _env("DATA_GO_KR_SERVICE_KEY")
+    NATIONAL_BUS_STOP_CSV_DIR: str = _project_path(
+        "NATIONAL_BUS_STOP_CSV_DIR",
+        PROJECT_ROOT / "data" / "public" / "national_bus_stops",
+    )
+
 
 _config = Config()
 
 NEO4J_URI = _config.NEO4J_URI
 NEO4J_USER = _config.NEO4J_USER
 NEO4J_PASS = _config.NEO4J_PASS
+NEO4J_V2_URI = _config.NEO4J_V2_URI
 MODEL_ID = _config.MODEL_ID
 HF_HOME = _config.HF_HOME
 MODEL_PATH = _config.MODEL_PATH
@@ -84,20 +99,25 @@ APP_PORT = _config.APP_PORT
 LLM_HOST = _config.LLM_HOST
 LLM_PORT = _config.LLM_PORT
 KAKAO_MAP_JAVASCRIPT_KEY = _config.KAKAO_MAP_JAVASCRIPT_KEY
+DATA_GO_KR_SERVICE_KEY = _config.DATA_GO_KR_SERVICE_KEY
+NATIONAL_BUS_STOP_CSV_DIR = _config.NATIONAL_BUS_STOP_CSV_DIR
 
 
 CONFIG_GROUPS = {
     "neo4j": ("NEO4J_URI", "NEO4J_USER", "NEO4J_PASS"),
+    "neo4j_v2": ("NEO4J_V2_URI", "NEO4J_USER", "NEO4J_PASS"),
     "llm_client": ("LLM_BASE_URL",),
     "model": ("MODEL_ID", "HF_HOME", "MODEL_PATH"),
     "app": ("APP_HOST", "APP_PORT"),
     "llm_server": ("LLM_HOST", "LLM_PORT"),
     "kakao": ("KAKAO_MAP_JAVASCRIPT_KEY",),
+    "data_go_kr": ("DATA_GO_KR_SERVICE_KEY",),
 }
 
 PLACEHOLDER_VALUES = {
     "your_neo4j_password",
     "your_kakao_javascript_key",
+    "your_data_go_kr_service_key",
     "change_me",
     "replace_me",
 }

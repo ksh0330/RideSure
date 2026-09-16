@@ -43,7 +43,7 @@ def emit(data: dict[str, Any]) -> None:
 
 def check_config() -> None:
     config.validate_required_config(
-        ("neo4j", "llm_client", "model", "app", "llm_server", "kakao")
+        ("neo4j", "neo4j_v2", "llm_client", "model", "app", "llm_server", "kakao")
     )
     emit({"check": "config", "status": "ok"})
 
@@ -56,6 +56,7 @@ def settings() -> None:
             "llm_port": config.LLM_PORT,
             "llm_base_url": config.LLM_BASE_URL,
             "neo4j_uri": config.NEO4J_URI,
+            "neo4j_v2_uri": config.NEO4J_V2_URI,
         }
     )
 
@@ -142,6 +143,32 @@ def check_database() -> None:
         raise SystemExit(1)
 
 
+def check_database_v2() -> None:
+    from data_insert_v2 import inspect_database, open_driver, verify_b1
+
+    driver = open_driver()
+    try:
+        snapshot = inspect_database(driver)
+        b1 = verify_b1(driver) if snapshot.state == "complete" else None
+    finally:
+        driver.close()
+    ok = snapshot.state == "complete" and b1 is not None and b1["status"] == "ok"
+    emit(
+        {
+            "check": "database_v2",
+            "status": "ok" if ok else "failed",
+            "state": snapshot.state,
+            "counts": snapshot.counts,
+            "orphan_count": snapshot.orphan_count,
+            "sequence_error_count": snapshot.sequence_error_count,
+            "provenance_error_count": snapshot.provenance_error_count,
+            "b1": b1,
+        }
+    )
+    if not ok:
+        raise SystemExit(1)
+
+
 def _get(url: str, timeout: float = 10) -> requests.Response:
     response = requests.get(url, timeout=timeout)
     response.raise_for_status()
@@ -223,24 +250,34 @@ def check_services(run_inference: bool) -> None:
         response = requests.post(
             f"{app_base}/api/predict",
             json={
-                "origin": "검증용 임의 출발지",
-                "destination": "검증용 임의 도착지",
-                "departure_time": "13:25",
-                "date": "2099-01-01",
+                "origin": "대전역",
+                "destination": "세종시청",
+                "departure_time": "08:00",
+                "date": "2025-11-08",
             },
             timeout=120,
         )
         response.raise_for_status()
         prediction = response.json()
         details["prediction_smoke"] = bool(prediction.get("success") and prediction.get("routes"))
-        details["demo_is_fixed"] = (
+        first_route = prediction.get("routes", [{}])[0]
+        details["prediction_uses_v2"] = (
             prediction.get("origin") == "대전역"
-            and prediction.get("destination") == "세종시청,시의회,교육청"
+            and prediction.get("destination") == "세종시청"
+            and first_route.get("line_name") == "B1"
+            and first_route.get("onboard_count") == 17
+            and first_route.get("evidence_source") == "HISTORICAL_OBSERVATION"
+        )
+        details["no_fake_boarding_probability"] = all(
+            route.get("boarding_probability") is None
+            for route in prediction.get("routes", [])
         )
         if not details["prediction_smoke"]:
             failures.append("Prediction smoke test returned no routes")
-        if not details["demo_is_fixed"]:
-            failures.append("Recovered-demo fixed-response boundary unexpectedly changed")
+        if not details["prediction_uses_v2"]:
+            failures.append("Prediction did not return expected Neo4j v2 B1 historical evidence")
+        if not details["no_fake_boarding_probability"]:
+            failures.append("Prediction returned a fabricated boarding probability")
     except Exception as exc:
         failures.append(f"Prediction smoke test failed: {exc}")
         details["prediction_smoke"] = False
@@ -285,6 +322,7 @@ def main() -> None:
     environment_parser = subparsers.add_parser("environment")
     environment_parser.add_argument("--require-cuda", action="store_true")
     subparsers.add_parser("database")
+    subparsers.add_parser("database-v2")
     services_parser = subparsers.add_parser("services")
     services_parser.add_argument("--skip-inference", action="store_true")
     subparsers.add_parser("javascript")
@@ -295,6 +333,7 @@ def main() -> None:
         "settings": settings,
         "environment": lambda: check_environment(args.require_cuda),
         "database": check_database,
+        "database-v2": check_database_v2,
         "services": lambda: check_services(not args.skip_inference),
         "javascript": check_javascript,
     }

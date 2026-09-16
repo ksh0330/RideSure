@@ -102,8 +102,8 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="EXAONE LLM Server",
-    description="고정된 RideSure 데모 결과의 자연어 설명을 생성하는 서버",
-    version="0.1-demo",
+    description="RideSure의 구조화된 경로·혼잡 사실을 자연어로 설명하는 서버",
+    version="0.2-v2",
     lifespan=lifespan,
 )
 
@@ -145,7 +145,10 @@ async def generate(request: GenerateRequest):
         messages = [
             {
                 "role": "system",
-                "content": "당신은 대전-세종 광역버스 탑승 예측 전문가입니다. 주어진 정보를 바탕으로 분석하고 추천해주세요."
+                "content": (
+                    "당신은 RideSure 대중교통 설명 도우미입니다. 입력에 제공된 구조화된 "
+                    "사실만 설명하고 노선, 정류장, 좌표, 재차인원, 탑승 확률을 만들지 마세요."
+                )
             },
             {
                 "role": "user",
@@ -210,14 +213,15 @@ async def generate(request: GenerateRequest):
 async def test_generation():
     """테스트용 간단한 추론"""
     test_prompt = """
-    출발지: 대전역
-    도착지: 세종시청
-    시각: 09:00
-
-    121번 노선: 승객 45명, 탑승 확률 85%
-    991번 노선: 승객 68명, 탑승 확률 60%
-
-    어느 노선을 추천하시겠습니까?
+    다음 구조화된 사실만 설명하세요.
+    노선: B1
+    승차 정류장: 대전역
+    하차 정류장: 세종시청.교육청.시의회
+    시각: 08시
+    historical 재차인원: 17명
+    상대 percentile: 56.6
+    혼잡 안내: 보통
+    이 값은 탑승 확률이 아닙니다.
     """
 
     request = GenerateRequest(

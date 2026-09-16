@@ -11,9 +11,9 @@ Stop-ManagedPythonProcess "llm_server" $llmScript (Join-Path $script:RunDirector
 
 docker info *> $null
 if ($LASTEXITCODE -eq 0) {
-    docker compose stop neo4j
-    Assert-LastExitCode "Neo4j stop"
-    Write-Host "[stop] Neo4j container stopped; named data/log volumes were preserved."
+    docker compose --profile v2 stop neo4j neo4j-v2
+    Assert-LastExitCode "Neo4j v1/v2 stop"
+    Write-Host "[stop] Neo4j v1/v2 containers stopped; named data/log volumes were preserved."
 }
 else {
     Write-Warning "Docker Desktop is unavailable; Neo4j could not be stopped."

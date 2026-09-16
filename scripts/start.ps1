@@ -10,11 +10,14 @@ Assert-LastExitCode "Configuration validation"
 
 docker info *> $null
 Assert-LastExitCode "Docker Desktop check"
-Write-Host "Starting Neo4j (no volume deletion is performed)..."
-docker compose up -d --wait neo4j
+Write-Host "Starting Neo4j v1/v2 (no volume deletion is performed)..."
+docker compose --profile v2 up -d --wait neo4j neo4j-v2
 if ($LASTEXITCODE -ne 0) {
-    throw "Neo4j startup failed. If this is an existing volume, its stored password may differ from .env; changing NEO4J_AUTH does not change an existing database password. No volume was deleted."
+    throw "Neo4j v1/v2 startup failed. Existing-volume credentials may differ from .env; no volume was deleted."
 }
+
+& $script:VenvPython data_insert_v2.py status
+Assert-LastExitCode "Neo4j v2 data verification (run data_insert_v2.py import if empty)"
 
 $settings = Get-RideSureSettings
 $llmScript = Join-Path $script:ProjectRoot "llm_server.py"
@@ -41,4 +44,6 @@ Write-Host "Web:           http://127.0.0.1:$($settings.app_port)"
 Write-Host "API docs:      http://127.0.0.1:$($settings.app_port)/docs"
 $neo4jHttpPort = if ([string]::IsNullOrWhiteSpace($env:NEO4J_HTTP_PORT)) { 7474 } else { $env:NEO4J_HTTP_PORT }
 Write-Host "Neo4j Browser: http://127.0.0.1:$neo4jHttpPort"
+$neo4jV2HttpPort = if ([string]::IsNullOrWhiteSpace($env:NEO4J_V2_HTTP_PORT)) { 7475 } else { $env:NEO4J_V2_HTTP_PORT }
+Write-Host "Neo4j v2:      http://127.0.0.1:$neo4jV2HttpPort"
 Write-Host "Logs:          $script:LogDirectory"
