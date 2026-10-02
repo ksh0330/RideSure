@@ -1,0 +1,485 @@
+{
+  "response": {
+    "header": {
+      "resultCode": "00",
+      "resultMsg": "NORMAL SERVICE."
+    },
+    "body": {
+      "items": {
+        "item": [
+          {
+            "gpslati": 36.49309,
+            "gpslong": 127.327,
+            "nodeid": "DJB9007519",
+            "nodenm": "집현동 기점지",
+            "nodeord": 1,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.493748,
+            "gpslong": 127.325554,
+            "nodeid": "DJB8007600",
+            "nodenm": "새나루마을10단지",
+            "nodeno": "064069",
+            "nodeord": 2,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.49818,
+            "gpslong": 127.32136,
+            "nodeid": "DJB8070049",
+            "nodenm": "집현동",
+            "nodeno": "057034",
+            "nodeord": 3,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.49785,
+            "gpslong": 127.312256,
+            "nodeid": "DJB8007458",
+            "nodenm": "반곡동(수루배마을)",
+            "nodeno": "059031",
+            "nodeord": 4,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.495014,
+            "gpslong": 127.3062,
+            "nodeid": "DJB8007459",
+            "nodenm": "국책연구단지 동측",
+            "nodeno": "051140",
+            "nodeord": 5,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.492313,
+            "gpslong": 127.30431,
+            "nodeid": "DJB8007460",
+            "nodenm": "국책연구단지 남측",
+            "nodeno": "057014",
+            "nodeord": 6,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.48944,
+            "gpslong": 127.302345,
+            "nodeid": "DJB8070048",
+            "nodenm": "대전세종연구원",
+            "nodeno": "064088",
+            "nodeord": 7,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.482353,
+            "gpslong": 127.30716,
+            "nodeid": "DJB8070051",
+            "nodenm": "한국개발연구원(KDI)",
+            "nodeno": "051002",
+            "nodeord": 8,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.466637,
+            "gpslong": 127.36213,
+            "nodeid": "DJB8007626",
+            "nodenm": "둔곡교차로",
+            "nodeno": 47440,
+            "nodeord": 9,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.460403,
+            "gpslong": 127.36053,
+            "nodeid": "DJB8007578",
+            "nodenm": "씨에이치씨랩",
+            "nodeno": 47000,
+            "nodeord": 10,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.4554,
+            "gpslong": 127.36401,
+            "nodeid": "DJB8007585",
+            "nodenm": "서한이다음1단지",
+            "nodeno": 47020,
+            "nodeord": 11,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.452374,
+            "gpslong": 127.363335,
+            "nodeid": "DJB8007588",
+            "nodenm": "서한이다음2단지",
+            "nodeno": 47030,
+            "nodeord": 12,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.437572,
+            "gpslong": 127.38576,
+            "nodeid": "DJB8001178",
+            "nodenm": "송강마을아파트",
+            "nodeno": 44790,
+            "nodeord": 13,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.426838,
+            "gpslong": 127.389755,
+            "nodeid": "DJB8001585",
+            "nodenm": "롯데마트대덕점",
+            "nodeno": 44590,
+            "nodeord": 14,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.422215,
+            "gpslong": 127.39723,
+            "nodeid": "DJB8007189",
+            "nodenm": "현대아울렛남문",
+            "nodeno": 46280,
+            "nodeord": 15,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.420444,
+            "gpslong": 127.39719,
+            "nodeid": "DJB8007593",
+            "nodenm": "용산고등학교",
+            "nodeno": 47070,
+            "nodeord": 16,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.417316,
+            "gpslong": 127.392784,
+            "nodeid": "DJB8002805",
+            "nodenm": "테크노밸리12단지",
+            "nodeno": 47090,
+            "nodeord": 17,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.41879,
+            "gpslong": 127.38794,
+            "nodeid": "DJB8005738",
+            "nodenm": "테크노밸리6단지",
+            "nodeno": 47110,
+            "nodeord": 18,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.418896,
+            "gpslong": 127.38294,
+            "nodeid": "DJB8001304",
+            "nodenm": "테크노밸리2단지",
+            "nodeno": 44520,
+            "nodeord": 19,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.386528,
+            "gpslong": 127.37847,
+            "nodeid": "DJB8001312",
+            "nodenm": "대덕고등학교",
+            "nodeno": 43160,
+            "nodeord": 20,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.376724,
+            "gpslong": 127.379036,
+            "nodeid": "DJB8002203",
+            "nodenm": "국립중앙과학관입구",
+            "nodeno": 43210,
+            "nodeord": 21,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.35903,
+            "gpslong": 127.37924,
+            "nodeid": "DJB8001568",
+            "nodenm": "통계센터",
+            "nodeno": 32970,
+            "nodeord": 22,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.353455,
+            "gpslong": 127.38088,
+            "nodeid": "DJB8001565",
+            "nodenm": "둔산2동주민센터",
+            "nodeno": 32230,
+            "nodeord": 23,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.352467,
+            "gpslong": 127.38446,
+            "nodeid": "DJB8002089",
+            "nodenm": "시청환승지",
+            "nodeno": 32340,
+            "nodeord": 24,
+            "routeid": "DJB30300151",
+            "updowncd": 0
+          },
+          {
+            "gpslati": 36.353645,
+            "gpslong": 127.38087,
+            "nodeid": "DJB8007599",
+            "nodenm": "둔산2동주민센터",
+            "nodeno": 35850,
+            "nodeord": 25,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.35854,
+            "gpslong": 127.379585,
+            "nodeid": "DJB8001567",
+            "nodenm": "둔산경찰서",
+            "nodeno": 32160,
+            "nodeord": 26,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.37685,
+            "gpslong": 127.37933,
+            "nodeid": "DJB8002202",
+            "nodenm": "신세계백화점",
+            "nodeno": 43220,
+            "nodeord": 27,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.386528,
+            "gpslong": 127.3788,
+            "nodeid": "DJB8001311",
+            "nodenm": "대덕고등학교",
+            "nodeno": 43200,
+            "nodeord": 28,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.418625,
+            "gpslong": 127.38302,
+            "nodeid": "DJB8001303",
+            "nodenm": "테크노밸리2단지",
+            "nodeno": 44510,
+            "nodeord": 29,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.418575,
+            "gpslong": 127.38797,
+            "nodeid": "DJB8007047",
+            "nodenm": "테크노밸리6단지",
+            "nodeno": 47100,
+            "nodeord": 30,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.417107,
+            "gpslong": 127.39259,
+            "nodeid": "DJB8002804",
+            "nodenm": "테크노밸리12단지",
+            "nodeno": 47120,
+            "nodeord": 31,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.4202,
+            "gpslong": 127.39732,
+            "nodeid": "DJB8007594",
+            "nodenm": "용산고등학교",
+            "nodeno": 47080,
+            "nodeord": 32,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.42474,
+            "gpslong": 127.39918,
+            "nodeid": "DJB8007490",
+            "nodenm": "현대아울렛북문",
+            "nodeno": 46680,
+            "nodeord": 33,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.427063,
+            "gpslong": 127.389915,
+            "nodeid": "DJB8001586",
+            "nodenm": "롯데마트대덕점",
+            "nodeno": 44600,
+            "nodeord": 34,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.438026,
+            "gpslong": 127.38519,
+            "nodeid": "DJB8001179",
+            "nodenm": "휴먼시아아파트",
+            "nodeno": 44770,
+            "nodeord": 35,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.452316,
+            "gpslong": 127.36349,
+            "nodeid": "DJB8007587",
+            "nodenm": "서한이다음2단지",
+            "nodeno": 46860,
+            "nodeord": 36,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.45538,
+            "gpslong": 127.36413,
+            "nodeid": "DJB8007570",
+            "nodenm": "우미린아파트",
+            "nodeno": 46870,
+            "nodeord": 37,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.460033,
+            "gpslong": 127.360695,
+            "nodeid": "DJB8007577",
+            "nodenm": "씨에이치씨랩",
+            "nodeno": 46930,
+            "nodeord": 38,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.46802,
+            "gpslong": 127.36271,
+            "nodeid": "DJB8007627",
+            "nodenm": "둔곡교차로",
+            "nodeno": 47430,
+            "nodeord": 39,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.48259,
+            "gpslong": 127.30741,
+            "nodeid": "DJB8070052",
+            "nodenm": "한국개발연구원(KDI)",
+            "nodeno": "051001",
+            "nodeord": 40,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.486923,
+            "gpslong": 127.30191,
+            "nodeid": "DJB8070053",
+            "nodenm": "법원,검찰청,경찰청",
+            "nodeno": "057011",
+            "nodeord": 41,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.49104,
+            "gpslong": 127.304016,
+            "nodeid": "DJB8007353",
+            "nodenm": "국책연구단지 남측",
+            "nodeno": "057013",
+            "nodeord": 42,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.495007,
+            "gpslong": 127.30666,
+            "nodeid": "DJB8007461",
+            "nodenm": "국책연구단지 동측",
+            "nodeno": "051139",
+            "nodeord": 43,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.497337,
+            "gpslong": 127.31077,
+            "nodeid": "DJB8007462",
+            "nodenm": "반곡동(수루배마을)",
+            "nodeno": "059030",
+            "nodeord": 44,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.49804,
+            "gpslong": 127.32304,
+            "nodeid": "DJB8070050",
+            "nodenm": "집현동",
+            "nodeno": "057033",
+            "nodeord": 45,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.49375,
+            "gpslong": 127.32526,
+            "nodeid": "DJB8007601",
+            "nodenm": "새나루마을10단지",
+            "nodeno": "064070",
+            "nodeord": 46,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          },
+          {
+            "gpslati": 36.49309,
+            "gpslong": 127.327,
+            "nodeid": "DJB9007519",
+            "nodenm": "집현동 기점지",
+            "nodeord": 47,
+            "routeid": "DJB30300151",
+            "updowncd": 1
+          }
+        ]
+      },
+      "numOfRows": 1000,
+      "pageNo": 1,
+      "totalCount": 47
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "response": {
+    "header": {
+      "resultCode": "00",
+      "resultMsg": "NORMAL SERVICE."
+    },
+    "body": {
+      "items": {
+        "item": {
+          "endnodenm": "오송역파라곤센트럴시티1차아파트",
+          "endvehicletime": 2230,
+          "routeid": "CJB270029500",
+          "routeno": 1003,
+          "routetp": "광역버스",
+          "startnodenm": "반석역",
+          "startvehicletime": "0600"
+        }
+      },
+      "numOfRows": 1000,
+      "pageNo": 1,
+      "totalCount": 1
+    }
+  }
+}

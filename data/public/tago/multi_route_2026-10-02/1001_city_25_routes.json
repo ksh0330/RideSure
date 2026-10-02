@@ -1,0 +1,24 @@
+{
+  "response": {
+    "header": {
+      "resultCode": "00",
+      "resultMsg": "NORMAL SERVICE."
+    },
+    "body": {
+      "items": {
+        "item": {
+          "endnodenm": "시청환승지",
+          "endvehicletime": 2240,
+          "routeid": "DJB30300151",
+          "routeno": 1001,
+          "routetp": "광역버스",
+          "startnodenm": "집현동",
+          "startvehicletime": "0540"
+        }
+      },
+      "numOfRows": 1000,
+      "pageNo": 1,
+      "totalCount": 1
+    }
+  }
+}

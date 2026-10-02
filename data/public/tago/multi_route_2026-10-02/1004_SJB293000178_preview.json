@@ -1,0 +1,111 @@
+{
+  "line": "1004",
+  "pattern_id": "hist-pattern-e0171493772f71dd3591a4c09fd4f537ecd0ffc0eeeaa7d8c9fa84e23225ecc6",
+  "historical_count": 39,
+  "official_route_id": "SJB293000178",
+  "city_code": "12",
+  "official_count": 39,
+  "counts": {
+    "EXACT": 0,
+    "SEQUENCE_MATCH": 26,
+    "AMBIGUOUS": 2,
+    "UNMATCHED": 11
+  },
+  "verified_orders": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    9,
+    12,
+    15,
+    16,
+    19,
+    20,
+    21,
+    23,
+    24,
+    26,
+    29,
+    30,
+    31,
+    32,
+    35,
+    36,
+    37,
+    38,
+    39
+  ],
+  "unused_official_orders": [
+    8,
+    10,
+    11,
+    13,
+    14,
+    17,
+    18,
+    22,
+    25,
+    27,
+    28,
+    33,
+    34
+  ],
+  "unmatched_historical": [
+    {
+      "seq": 8,
+      "name": "새뜸마을5.8단지"
+    },
+    {
+      "seq": 10,
+      "name": "새뜸마을7.10단지"
+    },
+    {
+      "seq": 11,
+      "name": "가온마을4.7단지"
+    },
+    {
+      "seq": 13,
+      "name": "가온마을6.9단지"
+    },
+    {
+      "seq": 14,
+      "name": "가재마을5.8단지"
+    },
+    {
+      "seq": 17,
+      "name": "범지기마을6.11단지"
+    },
+    {
+      "seq": 18,
+      "name": "범지기마을8.12단지"
+    },
+    {
+      "seq": 22,
+      "name": "범지기3.9단지(청소년센터)"
+    },
+    {
+      "seq": 25,
+      "name": "가락마을17.18단지"
+    },
+    {
+      "seq": 27,
+      "name": "가락마을10.13단지"
+    },
+    {
+      "seq": 28,
+      "name": "가락마을9.11단지"
+    },
+    {
+      "seq": 33,
+      "name": "봉안리"
+    },
+    {
+      "seq": 34,
+      "name": "봉안리"
+    }
+  ]
+}

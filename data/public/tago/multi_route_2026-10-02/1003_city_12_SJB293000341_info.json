@@ -1,0 +1,21 @@
+{
+  "response": {
+    "header": {
+      "resultCode": "00",
+      "resultMsg": "NORMAL SERVICE."
+    },
+    "body": {
+      "items": {
+        "item": {
+          "endnodenm": "오송역파라곤센트럴시티1차",
+          "endvehicletime": 2230,
+          "routeid": "SJB293000341",
+          "routeno": 1003,
+          "routetp": "광역버스",
+          "startnodenm": "반석역",
+          "startvehicletime": "0600"
+        }
+      }
+    }
+  }
+}

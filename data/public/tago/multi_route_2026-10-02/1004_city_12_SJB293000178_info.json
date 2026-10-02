@@ -1,0 +1,21 @@
+{
+  "response": {
+    "header": {
+      "resultCode": "00",
+      "resultMsg": "NORMAL SERVICE."
+    },
+    "body": {
+      "items": {
+        "item": {
+          "endnodenm": "장기중학교 후문",
+          "endvehicletime": 2320,
+          "routeid": "SJB293000178",
+          "routeno": 1004,
+          "routetp": "광역버스",
+          "startnodenm": "반석역",
+          "startvehicletime": "0550"
+        }
+      }
+    }
+  }
+}

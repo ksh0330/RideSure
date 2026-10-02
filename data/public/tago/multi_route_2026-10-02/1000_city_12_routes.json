@@ -1,0 +1,35 @@
+{
+  "response": {
+    "header": {
+      "resultCode": "00",
+      "resultMsg": "NORMAL SERVICE."
+    },
+    "body": {
+      "items": {
+        "item": [
+          {
+            "endnodenm": "반석역",
+            "endvehicletime": 2400,
+            "routeid": "SJB293000168",
+            "routeno": 1000,
+            "routetp": "광역버스",
+            "startnodenm": "조형아파트",
+            "startvehicletime": "0530"
+          },
+          {
+            "endnodenm": "조형아파트",
+            "endvehicletime": 2400,
+            "routeid": "SJB293000169",
+            "routeno": 1000,
+            "routetp": "광역버스",
+            "startnodenm": "반석역",
+            "startvehicletime": "0530"
+          }
+        ]
+      },
+      "numOfRows": 1000,
+      "pageNo": 1,
+      "totalCount": 2
+    }
+  }
+}

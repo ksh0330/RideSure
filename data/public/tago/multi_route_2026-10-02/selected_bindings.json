@@ -1,0 +1,26 @@
+{
+  "1000": {
+    "city_code": "12",
+    "route_id": "SJB293000169",
+    "expected_verified": 29,
+    "reason": "Exact route number; basic information and 34-stop order run from 반석역 to 조형아파트, matching the historical direction. Reverse candidate SJB293000168 does not align."
+  },
+  "1001": {
+    "city_code": "25",
+    "route_id": "DJB30300151",
+    "expected_verified": 45,
+    "reason": "Exact route number; 45 historical occurrences uniquely align to the interior 45 records of a 47-stop official round trip."
+  },
+  "1003": {
+    "city_code": "12",
+    "route_id": "SJB293000341",
+    "expected_verified": 19,
+    "reason": "Exact route number; basic information and one-way 35-stop order run from 반석역 toward 오송역, matching the historical outbound direction. The Cheongju round-trip candidate's global alignment crossed into its return direction, so it was rejected despite a higher raw match count."
+  },
+  "1004": {
+    "city_code": "12",
+    "route_id": "SJB293000178",
+    "expected_verified": 26,
+    "reason": "Exact route number; start/end metadata and 39-stop order match the historical outbound direction. The reverse candidate does not align; two repeated historical 봉안리 occurrences remain ambiguous."
+  }
+}

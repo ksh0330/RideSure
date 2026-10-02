@@ -1,0 +1,379 @@
+{
+  "source": "https://www.data.go.kr/data/15098529/openapi.do",
+  "retrieved_on": "2026-10-02",
+  "city_codes": {
+    "12": "세종특별시",
+    "25": "대전광역시/계룡시",
+    "33010": "청주시"
+  },
+  "files": [
+    {
+      "file": "city_codes.json",
+      "operation": "getCtyCodeList",
+      "parameters": {},
+      "sha256": "67937230aca247c6a50cf470aeb1310484a585bce1a82fce254fbc4b8fb760b7"
+    },
+    {
+      "file": "1000_city_12_routes.json",
+      "operation": "getRouteNoList",
+      "parameters": {
+        "cityCode": "12",
+        "routeNo": "1000"
+      },
+      "sha256": "bfd4fedf4b6b6bf4882b59b47c708cf961bc3fd8b369daf1c06e548c7f821a35"
+    },
+    {
+      "file": "1000_city_12_SJB293000168_info.json",
+      "operation": "getRouteInfoIem",
+      "parameters": {
+        "cityCode": "12",
+        "routeId": "SJB293000168"
+      },
+      "sha256": "63bc5cd69019266d352d3c239139845ec2320a6b954c542f1b8905c21afd5c71"
+    },
+    {
+      "file": "1000_city_12_SJB293000168_stops.json",
+      "operation": "getRouteAcctoThrghSttnList",
+      "parameters": {
+        "cityCode": "12",
+        "routeId": "SJB293000168"
+      },
+      "sha256": "6af0280d05de8d1f943a94ef0033eb9add9fcd14f4562cb8931aa329f14cea7a"
+    },
+    {
+      "file": "1000_city_12_SJB293000169_info.json",
+      "operation": "getRouteInfoIem",
+      "parameters": {
+        "cityCode": "12",
+        "routeId": "SJB293000169"
+      },
+      "sha256": "0c0fcd3b0090d6d9efe90e8f473e66bf4e546369c788bf91d6eb0f12ac000328"
+    },
+    {
+      "file": "1000_city_12_SJB293000169_stops.json",
+      "operation": "getRouteAcctoThrghSttnList",
+      "parameters": {
+        "cityCode": "12",
+        "routeId": "SJB293000169"
+      },
+      "sha256": "ab0942ab1fff6954c5bba5ba130a293b0d0886714a9780a12a63ab860151b963"
+    },
+    {
+      "file": "1000_city_25_routes.json",
+      "operation": "getRouteNoList",
+      "parameters": {
+        "cityCode": "25",
+        "routeNo": "1000"
+      },
+      "sha256": "e54429d5aba57f1e3b7b3ee44bc364b1cf35637cddd2a77daa661494b51adbaa"
+    },
+    {
+      "file": "1000_city_33010_routes.json",
+      "operation": "getRouteNoList",
+      "parameters": {
+        "cityCode": "33010",
+        "routeNo": "1000"
+      },
+      "sha256": "e54429d5aba57f1e3b7b3ee44bc364b1cf35637cddd2a77daa661494b51adbaa"
+    },
+    {
+      "file": "1000_1_city_12_routes.json",
+      "operation": "getRouteNoList",
+      "parameters": {
+        "cityCode": "12",
+        "routeNo": "1000-1"
+      },
+      "sha256": "e54429d5aba57f1e3b7b3ee44bc364b1cf35637cddd2a77daa661494b51adbaa"
+    },
+    {
+      "file": "1000_1_city_25_routes.json",
+      "operation": "getRouteNoList",
+      "parameters": {
+        "cityCode": "25",
+        "routeNo": "1000-1"
+      },
+      "sha256": "e54429d5aba57f1e3b7b3ee44bc364b1cf35637cddd2a77daa661494b51adbaa"
+    },
+    {
+      "file": "1000_1_city_33010_routes.json",
+      "operation": "getRouteNoList",
+      "parameters": {
+        "cityCode": "33010",
+        "routeNo": "1000-1"
+      },
+      "sha256": "e54429d5aba57f1e3b7b3ee44bc364b1cf35637cddd2a77daa661494b51adbaa"
+    },
+    {
+      "file": "1001_city_12_routes.json",
+      "operation": "getRouteNoList",
+      "parameters": {
+        "cityCode": "12",
+        "routeNo": "1001"
+      },
+      "sha256": "e54429d5aba57f1e3b7b3ee44bc364b1cf35637cddd2a77daa661494b51adbaa"
+    },
+    {
+      "file": "1001_city_25_routes.json",
+      "operation": "getRouteNoList",
+      "parameters": {
+        "cityCode": "25",
+        "routeNo": "1001"
+      },
+      "sha256": "bb296215fa456073d76761ec72a5d76ca9835161cbebc7eddd614be12c2fb919"
+    },
+    {
+      "file": "1001_city_25_DJB30300151_info.json",
+      "operation": "getRouteInfoIem",
+      "parameters": {
+        "cityCode": "25",
+        "routeId": "DJB30300151"
+      },
+      "sha256": "8ca941a48c49bbe740a784aa04b0edce64f7345823ada6998bd626596099b6dc"
+    },
+    {
+      "file": "1001_city_25_DJB30300151_stops.json",
+      "operation": "getRouteAcctoThrghSttnList",
+      "parameters": {
+        "cityCode": "25",
+        "routeId": "DJB30300151"
+      },
+      "sha256": "5122cf67c286293bffbdf4de3959bc75ab0c9be7edbdc9a0970447dd91037547"
+    },
+    {
+      "file": "1001_city_33010_routes.json",
+      "operation": "getRouteNoList",
+      "parameters": {
+        "cityCode": "33010",
+        "routeNo": "1001"
+      },
+      "sha256": "e54429d5aba57f1e3b7b3ee44bc364b1cf35637cddd2a77daa661494b51adbaa"
+    },
+    {
+      "file": "1003_city_12_routes.json",
+      "operation": "getRouteNoList",
+      "parameters": {
+        "cityCode": "12",
+        "routeNo": "1003"
+      },
+      "sha256": "82b9f83a362aecc7a666a1426d99295f0bfba5c1b454f07ee37a8f2c1d094a42"
+    },
+    {
+      "file": "1003_city_12_SJB293000341_info.json",
+      "operation": "getRouteInfoIem",
+      "parameters": {
+        "cityCode": "12",
+        "routeId": "SJB293000341"
+      },
+      "sha256": "6008c4c5d4ee03bd766667dbeff09fd6f3570ec35011f312c3d7fb3e00c1d8f5"
+    },
+    {
+      "file": "1003_city_12_SJB293000341_stops.json",
+      "operation": "getRouteAcctoThrghSttnList",
+      "parameters": {
+        "cityCode": "12",
+        "routeId": "SJB293000341"
+      },
+      "sha256": "d00c421501863f626eb222568223edab10924feb557c532c51cbbc946a222eee"
+    },
+    {
+      "file": "1003_city_12_SJB293000342_info.json",
+      "operation": "getRouteInfoIem",
+      "parameters": {
+        "cityCode": "12",
+        "routeId": "SJB293000342"
+      },
+      "sha256": "bff6f29daab4b822d05deede445974665e06504732120b5e7a8fb2fbce75cf90"
+    },
+    {
+      "file": "1003_city_12_SJB293000342_stops.json",
+      "operation": "getRouteAcctoThrghSttnList",
+      "parameters": {
+        "cityCode": "12",
+        "routeId": "SJB293000342"
+      },
+      "sha256": "8bf995050170dfe287876bac1eddd1ce8dc4f35ab71b04078db2e5b191e2e018"
+    },
+    {
+      "file": "1003_city_25_routes.json",
+      "operation": "getRouteNoList",
+      "parameters": {
+        "cityCode": "25",
+        "routeNo": "1003"
+      },
+      "sha256": "e54429d5aba57f1e3b7b3ee44bc364b1cf35637cddd2a77daa661494b51adbaa"
+    },
+    {
+      "file": "1003_city_33010_routes.json",
+      "operation": "getRouteNoList",
+      "parameters": {
+        "cityCode": "33010",
+        "routeNo": "1003"
+      },
+      "sha256": "7bfe05b1cde142b727ed6291f93d066eaea5376b3ff568ff28ce769113012238"
+    },
+    {
+      "file": "1003_city_33010_CJB270029500_info.json",
+      "operation": "getRouteInfoIem",
+      "parameters": {
+        "cityCode": "33010",
+        "routeId": "CJB270029500"
+      },
+      "sha256": "c022997a5f950a72f1a3396ca9ccec91e26247d23ef4bba6855d20a9e6151868"
+    },
+    {
+      "file": "1003_city_33010_CJB270029500_stops.json",
+      "operation": "getRouteAcctoThrghSttnList",
+      "parameters": {
+        "cityCode": "33010",
+        "routeId": "CJB270029500"
+      },
+      "sha256": "f7b25caad83c2cbcef94454af4b109ae774e9cefc624ff9bb0adb29b513cfd84"
+    },
+    {
+      "file": "1004_city_12_routes.json",
+      "operation": "getRouteNoList",
+      "parameters": {
+        "cityCode": "12",
+        "routeNo": "1004"
+      },
+      "sha256": "df302ab7fcf0c05012a730ea9ca13ca6c4be010857b325140aa28d61972fc401"
+    },
+    {
+      "file": "1004_city_12_SJB293000178_info.json",
+      "operation": "getRouteInfoIem",
+      "parameters": {
+        "cityCode": "12",
+        "routeId": "SJB293000178"
+      },
+      "sha256": "02bc9c4e070ca3e18192a161c7e6f4d42440994a86078e2affc095a3ceb657d9"
+    },
+    {
+      "file": "1004_city_12_SJB293000178_stops.json",
+      "operation": "getRouteAcctoThrghSttnList",
+      "parameters": {
+        "cityCode": "12",
+        "routeId": "SJB293000178"
+      },
+      "sha256": "872ac6a852b9117bd5fe8d36dc7f21a536d751ed331a6082f5d0c3ed4946d3ec"
+    },
+    {
+      "file": "1004_city_12_SJB293000179_info.json",
+      "operation": "getRouteInfoIem",
+      "parameters": {
+        "cityCode": "12",
+        "routeId": "SJB293000179"
+      },
+      "sha256": "43c7c0125157d9fcd89a0c15b0405b4963634ef1c918da235f59d8246c4c0a59"
+    },
+    {
+      "file": "1004_city_12_SJB293000179_stops.json",
+      "operation": "getRouteAcctoThrghSttnList",
+      "parameters": {
+        "cityCode": "12",
+        "routeId": "SJB293000179"
+      },
+      "sha256": "3e33985a13980592db317c2870f05856eff26770856825afafedeb3eebd0479e"
+    },
+    {
+      "file": "1004_city_25_routes.json",
+      "operation": "getRouteNoList",
+      "parameters": {
+        "cityCode": "25",
+        "routeNo": "1004"
+      },
+      "sha256": "e54429d5aba57f1e3b7b3ee44bc364b1cf35637cddd2a77daa661494b51adbaa"
+    },
+    {
+      "file": "1004_city_33010_routes.json",
+      "operation": "getRouteNoList",
+      "parameters": {
+        "cityCode": "33010",
+        "routeNo": "1004"
+      },
+      "sha256": "e54429d5aba57f1e3b7b3ee44bc364b1cf35637cddd2a77daa661494b51adbaa"
+    }
+  ],
+  "candidates": {
+    "1000": [
+      {
+        "city_code": "12",
+        "route_id": "SJB293000168",
+        "start_stop": "조형아파트",
+        "end_stop": "반석역",
+        "route_type": "광역버스",
+        "stop_count": 34,
+        "stops_file": "1000_city_12_SJB293000168_stops.json"
+      },
+      {
+        "city_code": "12",
+        "route_id": "SJB293000169",
+        "start_stop": "반석역",
+        "end_stop": "조형아파트",
+        "route_type": "광역버스",
+        "stop_count": 34,
+        "stops_file": "1000_city_12_SJB293000169_stops.json"
+      }
+    ],
+    "1000-1": [],
+    "1001": [
+      {
+        "city_code": "25",
+        "route_id": "DJB30300151",
+        "start_stop": "집현동",
+        "end_stop": "시청환승지",
+        "route_type": "광역버스",
+        "stop_count": 47,
+        "stops_file": "1001_city_25_DJB30300151_stops.json"
+      }
+    ],
+    "1003": [
+      {
+        "city_code": "12",
+        "route_id": "SJB293000341",
+        "start_stop": "반석역",
+        "end_stop": "오송역파라곤센트럴시티1차",
+        "route_type": "광역버스",
+        "stop_count": 35,
+        "stops_file": "1003_city_12_SJB293000341_stops.json"
+      },
+      {
+        "city_code": "12",
+        "route_id": "SJB293000342",
+        "start_stop": "오송역파라곤센트럴시티1차",
+        "end_stop": "반석역",
+        "route_type": "광역버스",
+        "stop_count": 35,
+        "stops_file": "1003_city_12_SJB293000342_stops.json"
+      },
+      {
+        "city_code": "33010",
+        "route_id": "CJB270029500",
+        "start_stop": "반석역",
+        "end_stop": "오송역파라곤센트럴시티1차아파트",
+        "route_type": "광역버스",
+        "stop_count": 70,
+        "stops_file": "1003_city_33010_CJB270029500_stops.json"
+      }
+    ],
+    "1004": [
+      {
+        "city_code": "12",
+        "route_id": "SJB293000178",
+        "start_stop": "반석역",
+        "end_stop": "장기중학교 후문",
+        "route_type": "광역버스",
+        "stop_count": 39,
+        "stops_file": "1004_city_12_SJB293000178_stops.json"
+      },
+      {
+        "city_code": "12",
+        "route_id": "SJB293000179",
+        "start_stop": "장기중학교 후문",
+        "end_stop": "반석역",
+        "route_type": "광역버스",
+        "stop_count": 37,
+        "stops_file": "1004_city_12_SJB293000179_stops.json"
+      }
+    ]
+  }
+}

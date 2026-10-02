@@ -1,0 +1,91 @@
+{
+  "line": "1003",
+  "pattern_id": "hist-pattern-fa6e1b3f1697c5aee37767abd1ebc0ee566e690fda30a175e3dd688ce11f50a9",
+  "historical_count": 28,
+  "official_route_id": "SJB293000341",
+  "city_code": "12",
+  "official_count": 35,
+  "counts": {
+    "EXACT": 0,
+    "SEQUENCE_MATCH": 19,
+    "AMBIGUOUS": 0,
+    "UNMATCHED": 9
+  },
+  "verified_orders": [
+    1,
+    5,
+    6,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    25,
+    27,
+    28,
+    29
+  ],
+  "unused_official_orders": [
+    2,
+    3,
+    4,
+    7,
+    8,
+    9,
+    22,
+    23,
+    24,
+    26,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35
+  ],
+  "unmatched_historical": [
+    {
+      "seq": 2,
+      "name": "새뜸마을1.2단지"
+    },
+    {
+      "seq": 3,
+      "name": "세종기상관측소(새뜸3.4단지)"
+    },
+    {
+      "seq": 4,
+      "name": "가득초등학교정문"
+    },
+    {
+      "seq": 7,
+      "name": "가락마을9.11단지"
+    },
+    {
+      "seq": 8,
+      "name": "가락마을10.13단지"
+    },
+    {
+      "seq": 9,
+      "name": "가락마을17.18단지"
+    },
+    {
+      "seq": 23,
+      "name": "오송역종점"
+    },
+    {
+      "seq": 27,
+      "name": "오송역파라곤센트럴시티1차서측"
+    },
+    {
+      "seq": 28,
+      "name": "바이오폴리스B3지구"
+    }
+  ]
+}

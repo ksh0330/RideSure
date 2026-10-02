@@ -1,0 +1,21 @@
+{
+  "response": {
+    "header": {
+      "resultCode": "00",
+      "resultMsg": "NORMAL SERVICE."
+    },
+    "body": {
+      "items": {
+        "item": {
+          "endnodenm": "조형아파트",
+          "endvehicletime": 2400,
+          "routeid": "SJB293000169",
+          "routeno": 1000,
+          "routetp": "광역버스",
+          "startnodenm": "반석역",
+          "startvehicletime": "0530"
+        }
+      }
+    }
+  }
+}

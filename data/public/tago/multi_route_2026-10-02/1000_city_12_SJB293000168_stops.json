@@ -1,0 +1,323 @@
+{
+  "response": {
+    "header": {
+      "resultCode": "00",
+      "resultMsg": "NORMAL SERVICE."
+    },
+    "body": {
+      "items": {
+        "item": [
+          {
+            "gpslati": 36.634452,
+            "gpslong": 127.288783,
+            "nodeid": "SJB293001027",
+            "nodenm": "조형아파트",
+            "nodeno": 11074,
+            "nodeord": 1,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.628679,
+            "gpslong": 127.288911,
+            "nodeid": "SJB293001030",
+            "nodenm": "신안2리입구",
+            "nodeno": 11047,
+            "nodeord": 2,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.626399,
+            "gpslong": 127.289632,
+            "nodeid": "SJB293001034",
+            "nodenm": "신안2리(안터)",
+            "nodeno": 11082,
+            "nodeord": 3,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.621845,
+            "gpslong": 127.290509,
+            "nodeid": "SJB293001043",
+            "nodenm": "홍익대학교",
+            "nodeno": 11089,
+            "nodeord": 4,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.616225,
+            "gpslong": 127.287098,
+            "nodeid": "SJB293001021",
+            "nodenm": "신안리마을회관",
+            "nodeno": 11049,
+            "nodeord": 5,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.610942,
+            "gpslong": 127.293072,
+            "nodeid": "SJB293001055",
+            "nodenm": "고려대학교",
+            "nodeno": 11001,
+            "nodeord": 6,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.605643,
+            "gpslong": 127.29406,
+            "nodeid": "SJB293064084",
+            "nodenm": "세무서 출장민원실",
+            "nodeno": 11098,
+            "nodeord": 7,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.599743,
+            "gpslong": 127.295111,
+            "nodeid": "SJB293001072",
+            "nodenm": "조치원역뒤편",
+            "nodeno": 11055,
+            "nodeord": 8,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.594484,
+            "gpslong": 127.291003,
+            "nodeid": "SJB293064034",
+            "nodenm": "신흥사거리",
+            "nodeno": 11095,
+            "nodeord": 9,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.591046,
+            "gpslong": 127.291551,
+            "nodeid": "SJB293001052",
+            "nodenm": "자이아파트",
+            "nodeno": 11059,
+            "nodeord": 10,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.578776,
+            "gpslong": 127.292537,
+            "nodeid": "SJB293016126",
+            "nodenm": "월하리",
+            "nodeno": 36104,
+            "nodeord": 11,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.561958,
+            "gpslong": 127.285259,
+            "nodeid": "SJB293064250",
+            "nodenm": "봉암리",
+            "nodeno": 36141,
+            "nodeord": 12,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.553186,
+            "gpslong": 127.2781373,
+            "nodeid": "SJB293900057",
+            "nodenm": "연기리",
+            "nodeno": 31084,
+            "nodeord": 13,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.520049,
+            "gpslong": 127.241537,
+            "nodeid": "SJB293064098",
+            "nodenm": "가락마을22단지",
+            "nodeno": 53010,
+            "nodeord": 14,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.518379,
+            "gpslong": 127.239236,
+            "nodeid": "SJB293064096",
+            "nodenm": "두루초,중학교",
+            "nodeno": 53008,
+            "nodeord": 15,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.517332,
+            "gpslong": 127.240846,
+            "nodeid": "SJB293064234",
+            "nodenm": "가락마을20,21단지",
+            "nodeno": 53051,
+            "nodeord": 16,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.511509,
+            "gpslong": 127.241317,
+            "nodeid": "SJB293064203",
+            "nodenm": "시립도서관,대법원등기정보센터",
+            "nodeno": 53047,
+            "nodeord": 17,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.508939,
+            "gpslong": 127.240408,
+            "nodeid": "SJB293064060",
+            "nodenm": "가락마을8단지",
+            "nodeno": 51080,
+            "nodeord": 18,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.505216,
+            "gpslong": 127.24026,
+            "nodeid": "SJB293064205",
+            "nodenm": "가락마을7,8단지",
+            "nodeno": 53049,
+            "nodeord": 19,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.505074,
+            "gpslong": 127.243827,
+            "nodeid": "SJB293064061",
+            "nodenm": "종촌고(가재마을3,4단지)",
+            "nodeno": 51081,
+            "nodeord": 20,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.50501,
+            "gpslong": 127.24867,
+            "nodeid": "SJB293064125",
+            "nodenm": "가재마을7단지",
+            "nodeno": 53033,
+            "nodeord": 21,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.500788,
+            "gpslong": 127.249732,
+            "nodeid": "SJB293064139",
+            "nodenm": "가재마을5,8단지",
+            "nodeno": 53035,
+            "nodeord": 22,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.498647,
+            "gpslong": 127.255243,
+            "nodeid": "SJB293062002",
+            "nodenm": "어진중학교(한뜰마을4단지)",
+            "nodeno": 52019,
+            "nodeord": 23,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.493878,
+            "gpslong": 127.256158,
+            "nodeid": "SJB293054001",
+            "nodenm": "다정동(대성고등학교)",
+            "nodeno": 51017,
+            "nodeord": 24,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.4903,
+            "gpslong": 127.256369,
+            "nodeid": "SJB293064436",
+            "nodenm": "한국산업인력공단 세종지사",
+            "nodeno": 51138,
+            "nodeord": 25,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.487716,
+            "gpslong": 127.257121,
+            "nodeid": "SJB293053003",
+            "nodenm": "새롬동,나성동(청소년센터)",
+            "nodeno": 51010,
+            "nodeord": 26,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.481128,
+            "gpslong": 127.261558,
+            "nodeid": "SJB293053008",
+            "nodenm": "한솔동(첫마을)",
+            "nodeno": 51036,
+            "nodeord": 27,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.468829,
+            "gpslong": 127.273462,
+            "nodeid": "SJB293055059",
+            "nodenm": "세종고속시외버스터미널",
+            "nodeno": 51053,
+            "nodeord": 28,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.472042,
+            "gpslong": 127.276475,
+            "nodeid": "SJB293064232",
+            "nodenm": "대평동(해들마을)",
+            "nodeno": 51124,
+            "nodeord": 29,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.471927,
+            "gpslong": 127.279371,
+            "nodeid": "SJB293064353",
+            "nodenm": "대평동커뮤니티센터",
+            "nodeno": 60019,
+            "nodeord": 30,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.4683,
+            "gpslong": 127.2822,
+            "nodeid": "SJB293064513",
+            "nodenm": "용포삼거리",
+            "nodeno": 34132,
+            "nodeord": 31,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.46515,
+            "gpslong": 127.2811,
+            "nodeid": "SJB293011028",
+            "nodenm": "금남면사무소",
+            "nodeno": 34011,
+            "nodeord": 32,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.456416,
+            "gpslong": 127.284064,
+            "nodeid": "SJB293011033",
+            "nodenm": "발산리",
+            "nodeno": 34053,
+            "nodeord": 33,
+            "routeid": "SJB293000168"
+          },
+          {
+            "gpslati": 36.391644,
+            "gpslong": 127.31474,
+            "nodeid": "SJB186004229",
+            "nodenm": "반석역",
+            "nodeno": 43970,
+            "nodeord": 34,
+            "routeid": "SJB293000168"
+          }
+        ]
+      },
+      "numOfRows": 1000,
+      "pageNo": 1,
+      "totalCount": 34
+    }
+  }
+}
