@@ -66,8 +66,9 @@ class V2TransitRepository:
     ) -> list[dict[str, Any]]:
         """Return routeable stops with real coordinates inside ``radius_m``.
 
-        Historical stops currently have no coordinates, so an unenriched graph
-        correctly returns an empty list rather than fabricated locations.
+        This searches coordinates on historical Stop nodes only. Occurrence
+        mappings do not turn a name-based historical Stop into one physical
+        location, so this lookup may remain empty after B1 enrichment.
         """
         coordinates = (lat, lon, radius_m)
         if any(
@@ -216,8 +217,12 @@ class V2TransitRepository:
              origin_occurrence, destination_occurrence, path_index,
              nodes(path)[path_index] AS occurrence
         MATCH (occurrence)-[:AT_STOP]->(stop:Stop)
+        OPTIONAL MATCH (occurrence)-[verified:VERIFIED_OFFICIAL_STOP]->(official:Stop)
+        WHERE verified.mapping_status IN ['EXACT', 'SEQUENCE_MATCH']
+          AND verified.official_node_id = official.official_node_id
+          AND official.id_kind = 'OFFICIAL_NODE_ID'
         WITH line, pattern, path, origin, destination,
-             origin_occurrence, destination_occurrence, path_index, occurrence, stop
+             origin_occurrence, destination_occurrence, path_index, occurrence, stop, official
         ORDER BY path_index
         WITH line, pattern, path, origin, destination,
              origin_occurrence, destination_occurrence,
@@ -226,8 +231,8 @@ class V2TransitRepository:
                  seq: occurrence.seq,
                  stop_id: stop.stop_id,
                  stop_name: stop.name,
-                 lat: properties(stop)['lat'],
-                 lon: properties(stop)['lon']
+                 lat: official.lat,
+                 lon: official.lon
              }) AS stops
         RETURN line.line_id AS line_id,
                line.name AS line_name,
@@ -298,12 +303,16 @@ class V2TransitRepository:
         MATCH (pattern:RoutePattern {pattern_id: $pattern_id})
               -[:HAS_OCCURRENCE]->(occurrence:StopOccurrence)
               -[:AT_STOP]->(stop:Stop)
+        OPTIONAL MATCH (occurrence)-[verified:VERIFIED_OFFICIAL_STOP]->(official:Stop)
+        WHERE verified.mapping_status IN ['EXACT', 'SEQUENCE_MATCH']
+          AND verified.official_node_id = official.official_node_id
+          AND official.id_kind = 'OFFICIAL_NODE_ID'
         RETURN occurrence.occurrence_id AS occurrence_id,
                occurrence.seq AS seq,
                stop.stop_id AS stop_id,
                stop.name AS stop_name,
-               properties(stop)['lat'] AS lat,
-               properties(stop)['lon'] AS lon
+               official.lat AS lat,
+               official.lon AS lon
         ORDER BY occurrence.seq, occurrence.occurrence_id
         """
         with self.driver.session() as session:

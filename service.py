@@ -134,12 +134,16 @@ class BusPredictionService:
 
     @staticmethod
     def _geometry_from_stops(stops: Iterable[dict[str, Any]]) -> list[dict[str, float]]:
-        geometry = [
+        ordered_stops = list(stops)
+        if len(ordered_stops) < 2 or any(
+            not _present(stop.get("lat")) or not _present(stop.get("lon"))
+            for stop in ordered_stops
+        ):
+            return []
+        return [
             {"lat": float(stop["lat"]), "lon": float(stop["lon"])}
-            for stop in stops
-            if _present(stop.get("lat")) and _present(stop.get("lon"))
+            for stop in ordered_stops
         ]
-        return geometry if len(geometry) >= 2 else []
 
     def _route_candidates(
         self,
@@ -211,15 +215,15 @@ class BusPredictionService:
         if destination_candidate.get("distance_m") is not None:
             stops[-1]["distance_m"] = destination_candidate["distance_m"]
 
-        route_geometry = route.get("geometry") or self._geometry_from_stops(stops)
+        # A missing intermediate occurrence must make the entire approximation
+        # unavailable; never draw a shortcut across an unmapped stop.
+        route_geometry = self._geometry_from_stops(stops)
         geometry = [
             {"lat": float(point["lat"]), "lon": float(point["lon"])}
             for point in route_geometry
             if _present(point.get("lat")) and _present(point.get("lon"))
         ]
-        geometry_kind = route.get("geometry_kind") or (
-            "STOP_TO_STOP_APPROXIMATION" if geometry else "UNAVAILABLE"
-        )
+        geometry_kind = "STOP_TO_STOP_APPROXIMATION" if geometry else "UNAVAILABLE"
         return {
             "line_id": str(route["line_id"]),
             "line_name": str(route["line_name"]),

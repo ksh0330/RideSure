@@ -146,6 +146,37 @@ class AppTests(unittest.TestCase):
 
 
 class PredictionV2ServiceTests(unittest.TestCase):
+    def test_geometry_requires_every_historical_occurrence_coordinate(self) -> None:
+        service = BusPredictionService.__new__(BusPredictionService)
+        service.repository = Mock()
+        service.repository.resolve_congestion.return_value = {
+            "source": "UNKNOWN", "status": "INSUFFICIENT_DATA",
+            "onboard_count": None, "relative_percentile": None,
+            "congestion_level": "UNKNOWN", "boarding_guidance": "데이터 부족",
+        }
+        route = {
+            "line_id": "hist-line-b1", "line_name": "B1", "pattern_id": "hist-pattern-b1",
+            "origin_occurrence_id": "o1", "destination_occurrence_id": "o3",
+            "stops": [
+                {"occurrence_id": "o1", "stop_name": "역사적 출발", "lat": 36.3, "lon": 127.3},
+                {"occurrence_id": "o2", "stop_name": "역사적 중간", "lat": None, "lon": None},
+                {"occurrence_id": "o3", "stop_name": "역사적 도착", "lat": 36.4, "lon": 127.4},
+            ],
+            "geometry": [{"lat": 36.3, "lon": 127.3}, {"lat": 36.4, "lon": 127.4}],
+            "geometry_kind": "STOP_TO_STOP_APPROXIMATION",
+        }
+        result = service._build_route_result(route, {}, {}, "2025-11-08", 8)
+        self.assertEqual(result["geometry_kind"], "UNAVAILABLE")
+        self.assertEqual(result["geometry"], [])
+        self.assertEqual([stop["name"] for stop in result["stops"]],
+                         ["역사적 출발", "역사적 중간", "역사적 도착"])
+
+        route["stops"][1]["lat"] = 36.35
+        route["stops"][1]["lon"] = 127.35
+        complete = service._build_route_result(route, {}, {}, "2025-11-08", 8)
+        self.assertEqual(complete["geometry_kind"], "STOP_TO_STOP_APPROXIMATION")
+        self.assertEqual(len(complete["geometry"]), 3)
+
     def test_user_input_drives_v2_route_and_historical_evidence(self) -> None:
         repository = Mock()
         repository.find_stops_by_name.side_effect = [

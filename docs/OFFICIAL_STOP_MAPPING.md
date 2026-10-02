@@ -45,7 +45,9 @@ official source, route ID, node ID, direction/order, staging ID, route-binding
 source, and coordinate source.
 Coordinates are read through this edge only for `EXACT`/`SEQUENCE_MATCH`;
 they are never copied onto the historical name-based `Stop`. This mapping is
-not yet used by the routing service or frontend.
+used by occurrence-based route queries. Name-based stop search still has no
+single physical coordinate for a historical Stop shared by multiple
+occurrences.
 
 ## Prepare and inspect B1
 
@@ -95,3 +97,22 @@ official node IDs, and coordinates. The program never inserts current-only
 official stops into the historical sequence. Reapplying an unchanged plan
 uses `MERGE` and preserves one edge per matched occurrence; an existing edge
 to another official stop is rejected for manual review.
+
+## Phase 2C local B1 application
+
+The saved B1 TAGO response was imported twice into Neo4j v2. Both runs left
+55 official Stops, 55 `RouteStopStaging` nodes, and 55 `STAGES_STOP` edges.
+The approved Phase 2B plan was applied twice; both runs left exactly 41
+`VERIFIED_OFFICIAL_STOP` relationships on 41 distinct historical occurrences.
+The 12 unmatched occurrences and the current-only official orders 11 and 46
+received no mapping or historical observations.
+
+`V2TransitRepository` now reads historical name/ID from `AT_STOP` and optional
+latitude/longitude from the occurrence's verified official Stop. Missing
+mappings return null coordinates. A route segment receives
+`STOP_TO_STOP_APPROXIMATION` only when **every** selected occurrence has a
+verified coordinate; otherwise geometry is `UNAVAILABLE` with no partial
+polyline. The current B1 mapped runs are historical seq 1–11, 14–15, 17–23,
+27–28, 32–38, 40–41, and 44–53. For example, `대전역` → `오정농수산시장`
+(seq 2–9) returns eight coordinates. The route topology, historical names,
+and 273,000 onboard observations remain unchanged.

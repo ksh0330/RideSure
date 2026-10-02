@@ -143,7 +143,11 @@ class DirectRouteTests(unittest.TestCase):
         self.assertIn("occurrence.pattern_id = pattern.pattern_id", query)
         self.assertIn("endNode(next_relationship).seq", query)
         self.assertIn("stop_id: stop.stop_id", query)
-        self.assertIn("lat: properties(stop)['lat']", query)
+        self.assertIn("stop_name: stop.name", query)
+        self.assertIn("OPTIONAL MATCH (occurrence)-[verified:VERIFIED_OFFICIAL_STOP]->(official:Stop)", query)
+        self.assertIn("lat: official.lat", query)
+        self.assertIn("lon: official.lon", query)
+        self.assertNotIn("lat: properties(stop)['lat']", query)
         self.assertEqual(parameters["origin_stop_id"], "repeat")
         self.assertEqual(parameters["destination_stop_id"], "repeat")
 
@@ -156,6 +160,29 @@ class DirectRouteTests(unittest.TestCase):
         repository = V2TransitRepository(FakeDriver(stops))
 
         self.assertEqual(repository.get_route_stops("p1", "o2", "o3"), stops[1:])
+
+    def test_occurrence_coordinates_do_not_change_historical_names_or_collapse_duplicates(self) -> None:
+        stops = [
+            {"occurrence_id": "o27", "seq": 27, "stop_id": "historical-osong",
+             "stop_name": "오송역2.3.4", "lat": 36.6, "lon": 127.3},
+            {"occurrence_id": "o28", "seq": 28, "stop_id": "historical-osong",
+             "stop_name": "오송역2.3.4", "lat": 36.61, "lon": 127.31},
+            {"occurrence_id": "o29", "seq": 29, "stop_id": "historical-other",
+             "stop_name": "누리리", "lat": None, "lon": None},
+        ]
+        driver = FakeDriver(stops)
+        repository = V2TransitRepository(driver)
+
+        self.assertEqual(repository.get_route_stops("p1"), stops)
+        query, _ = driver.calls[0]
+        self.assertIn("OPTIONAL MATCH (occurrence)-[verified:VERIFIED_OFFICIAL_STOP]->(official:Stop)", query)
+        self.assertIn("stop.name AS stop_name", query)
+        self.assertIn("official.lat AS lat", query)
+        self.assertIn("official.lon AS lon", query)
+        self.assertNotIn("properties(stop)['lat'] AS lat", query)
+        self.assertEqual(stops[0]["stop_id"], stops[1]["stop_id"])
+        self.assertNotEqual(stops[0]["lat"], stops[1]["lat"])
+        self.assertIsNone(stops[2]["lat"])
 
 
 class RouteGeometryTests(unittest.TestCase):
