@@ -5,6 +5,8 @@
 RideSure는 **2025 DSC 공유대학 KT 기업연계 오픈데이터 활용 스타트업 챌린지**에서 시작한 프로젝트입니다.  
 초기 대회 버전은 제한된 데이터와 구현 기간으로 인해 일부 경로·혼잡 안내가 단순화되어 있었고, 이후 포트폴리오 프로젝트로 재구성하면서 **Neo4j 데이터 모델과 ETL을 다시 설계하고 실제 관측 데이터에 근거한 경로 탐색·혼잡 안내 구조로 개선**했습니다.
 
+재구성 버전에서는 노선·기종점별 `RoutePattern` 아래 순서가 있는 `StopOccurrence`를 `NEXT`로 연결해 반복 정류장을 보존합니다. 원본 CSV에 공식 방향 코드가 없어 `direction_status`는 `UNKNOWN`입니다. 저장소에 포함된 CSV **11,375행·273,000개 시간대 값**은 로컬 프로파일로 확인했습니다. 이 값은 원래 대회 버전의 성과 수치나 새 클론에 이미 적재된 Neo4j 개수가 아닙니다. 현재 추천 순서는 가까운 정류장 후보와 직행 경로의 hop 수에 기반하며, 혼잡 수준은 선택된 경로에 대한 **안내 근거**로 제공합니다.
+
 ---
 
 ## Problem
@@ -42,8 +44,8 @@ Kakao Map + User Guidance
 
 1. Neo4j에서 방향성을 가진 직행 경로를 탐색합니다.
 2. 해당 RoutePattern과 StopOccurrence의 시간대별 차내 재차인원을 조회합니다.
-3. 관측값을 같은 조건의 분포와 비교해 상대 혼잡 수준을 계산합니다.
-4. EXAONE은 이미 계산된 구조화 결과만 전달받아 짧은 자연어 안내를 생성합니다.
+3. 관측값을 같은 RoutePattern·날짜·시간의 분포와 비교해 상대 혼잡 수준을 계산합니다.
+4. EXAONE은 이미 계산된 구조화 결과만 전달받아 짧은 자연어 안내를 생성합니다. 모델이 없거나 설명 검증에 실패하면 규칙 기반 문장을 사용합니다.
 5. Kakao Map에서 출발지·도착지와 사용 가능한 경로 정보를 시각화합니다.
 
 **EXAONE이 노선이나 혼잡도를 계산하지 않습니다.**  
@@ -120,13 +122,13 @@ EXAONE에는 노선, 재차인원, 혼잡 수준 등 애플리케이션이 계�
 
 ### 데이터 구조 개선
 
-원본 historical 데이터:
+저장소에 포함된 현재 historical 데이터의 로컬 CSV 프로파일:
 
 - 3개 CSV
 - **11,375개** 노선·정류장 행
 - 각 행의 24개 시간대 관측
 
-Neo4j v2 변환 결과:
+v2 ETL이 이 CSV에서 계산한 **예상 그래프 개수**:
 
 - **148 Lines**
 - **154 RoutePatterns**
@@ -134,11 +136,11 @@ Neo4j v2 변환 결과:
 - **11,375 StopOccurrences**
 - **273,000 LoadObservations**
 
-원본 11,375개 행의 시간대 데이터를 273,000개 Observation으로 보존해 각 관측값의 provenance를 추적할 수 있도록 구성했습니다.
+v2 importer는 원본 파일 hash·행·시간을 각 Observation ID에 반영해 출처를 추적합니다. 위 개수는 `data_insert_v2.py profile`로 검증한 값이며, 새 클론의 Neo4j 적재 결과는 `data_insert_v2.py verify`로 별도 확인해야 합니다.
 
 ### B1 경로 검증
 
-B1 노선에서 다음 방향의 경로 탐색을 검증했습니다.
+B1 CSV topology와 경로 조회 검증 코드는 다음 양방향 사례를 다룹니다. 실제 Neo4j v2 실행 검증은 로컬 적재 후 수행합니다.
 
 ```text
 대전역 → 세종시청
@@ -161,10 +163,11 @@ B1 노선에서 다음 방향의 경로 탐색을 검증했습니다.
 
 ### 차내 재차인원
 
-- 제공기관: **국토교통부**
-- 데이터: 노선별 재차인원 / 노선·정류장 지표(노선별 차내 재차인원)
-- 수집 시스템: **교통카드빅데이터시스템(STCIS)**
+- 저장소 입력: `노선·정류장 지표(노선별 차내 재차인원)` CSV 3개
+- 관련 공식 자료: 국토교통부의 노선별 재차인원 현황, 공공데이터포털, 교통카드빅데이터시스템(STCIS)
 - 활용 항목: 노선, 기종점, 정류장 순번, 정류장명, 시간대별 차내 재차인원
+
+공식 포털 자료는 관련 데이터 계열을 설명하지만, 저장소의 세 CSV와 일대일로 연결하는 다운로드 기록은 없습니다. 파일별 원 출처와 재배포 조건은 [데이터 출처 문서](docs/DATA_SOURCES.md)에 확인 범위를 명시했습니다.
 
 관련 데이터:
 - [공공데이터포털 - 국토교통부 노선별 재차인원 현황](https://www.data.go.kr/data/15071617/fileData.do)
@@ -172,13 +175,13 @@ B1 노선에서 다음 방향의 경로 탐색을 검증했습니다.
 
 ### 전국 버스정류장 위치정보
 
-국토교통부 전국 버스정류장 위치정보를 활용해 공식 정류장 ID와 WGS84 좌표를 적재할 수 있도록 adapter를 구현했습니다.
+국토교통부 전국 버스정류장 위치정보 CSV를 **별도로 다운로드한 경우** 공식 정류장 ID와 WGS84 좌표를 적재할 수 있도록 adapter를 구현했습니다. CSV는 저장소에 포함되지 않습니다.
 
 - [공공데이터포털 - 전국 버스정류장 위치정보](https://www.data.go.kr/data/15067528/fileData.do)
 
 ### TAGO 버스노선정보
 
-TAGO 버스노선정보 API를 통해 공식 route ID, 정류장 ID, 정류장 순서, 방향 및 좌표를 조회할 수 있도록 구성했습니다.
+TAGO 버스노선정보 API adapter는 키와 공식 route ID가 있을 때 정류장 ID·순서·선택적 방향·좌표를 조회하도록 구성했습니다. 실제 B1 공식 매핑은 검증되지 않았습니다.
 
 - [공공데이터포털 - TAGO 버스노선정보](https://www.data.go.kr/data/15098529/openapi.do)
 
@@ -222,14 +225,29 @@ TAGO 버스노선정보 API를 통해 공식 route ID, 정류장 ID, 정류장 �
 현재 버전은 전국 단위 상용 대중교통 내비게이션이 아니라 **포트폴리오용 프로토타입**입니다.
 
 - Neo4j에서 탐색 가능한 직행 경로 중심이며 전체 환승 경로 탐색은 지원하지 않습니다.
+- 현재 후보 순위는 근접 정류장과 hop 수 기준입니다. 혼잡을 점수에 반영한 최적 경로 탐색은 구현되지 않았습니다.
 - 실시간 Observation을 사용할 수 있는 구조는 준비되어 있지만 production realtime importer는 구현 범위에 포함하지 않았습니다.
 - 차내 재차인원만으로 실제 탑승 성공 확률을 계산할 수 없기 때문에 `boarding_probability`를 임의 생성하지 않습니다.
 - 공식 road shape가 없는 경우 지도 경로는 정류장 좌표를 연결한 근사 경로만 사용할 수 있습니다.
 - 공공데이터와 historical 데이터의 정류장 매핑은 검증된 경우에만 적용합니다.
+- Historical CSV에 공식 정류장 ID가 없어 동명 정류장은 아직 확실하게 구분할 수 없습니다.
 
 ---
 
 ## Run Locally
+
+### Clean-clone audit without external services
+
+Python 3.12만으로 저장소의 CSV와 단위 테스트를 먼저 확인할 수 있습니다. 이 과정에는 Docker, API 키, EXAONE 가중치가 필요하지 않습니다.
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-audit.txt
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe .\data_insert_v2.py profile
+```
+
+지도와 로컬 추론을 포함한 전체 실행에는 아래 설정이 추가로 필요합니다. `setup.ps1`은 v1/v2 Neo4j와 EXAONE까지 준비하므로 다운로드·GPU 요구량이 큽니다.
 
 ### Requirements
 
@@ -257,6 +275,8 @@ KAKAO_MAP_JAVASCRIPT_KEY=<Kakao JavaScript key>
 powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\start.ps1
 ```
+
+`setup.ps1`은 첫 실행에서 `.env.example`을 `.env`로 복사하고 중단합니다. 실제 값을 입력한 후 다시 실행하세요. 새 클론의 v2 Neo4j는 비어 있으며 setup이 세 CSV를 적재합니다. 모델을 이미 준비했다면 `-SkipModelDownload`, CPU 실행을 의도했다면 `-AllowCpu`를 사용할 수 있습니다.
 
 ### Verify
 

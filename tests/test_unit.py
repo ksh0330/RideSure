@@ -61,7 +61,17 @@ class ConfigTests(unittest.TestCase):
                 config.validate_required_config(("neo4j",))
 
     def test_configured_groups_validate(self) -> None:
-        config.validate_required_config(("neo4j", "llm_client", "model"))
+        configured = {
+            "NEO4J_URI": "bolt://127.0.0.1:7687",
+            "NEO4J_USER": "neo4j",
+            "NEO4J_PASS": "test-only-password",
+            "LLM_BASE_URL": "http://127.0.0.1:8001",
+            "MODEL_ID": "test-only-model",
+            "HF_HOME": ".cache/test-only",
+            "MODEL_PATH": ".cache/test-only/model",
+        }
+        with patch.multiple(config, **configured):
+            config.validate_required_config(("neo4j", "llm_client", "model"))
 
 
 class AppTests(unittest.TestCase):

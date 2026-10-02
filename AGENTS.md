@@ -252,24 +252,7 @@ Avoid spending excessive implementation effort on exhaustive auditing unless a d
 
 ## Repository Safety
 
-Repository location:
-
-```text
-D:\sun
-```
-
-Primary development branch:
-
-```text
-feature/neo4j-prediction
-```
-
-Preserve:
-
-```text
-main
-v0.1-demo
-```
+Use the current checkout as the repository root. Inspect the current branch before edits; `main` contains the portfolio reconstruction. Create a focused branch when needed, and preserve the `v0.1-demo` tag.
 
 Do not overwrite or rewrite the preserved demo history without explicit instruction.
 
