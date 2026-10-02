@@ -89,9 +89,22 @@ class StopLookupTests(unittest.TestCase):
         self.assertEqual(repository.find_stops_by_name(" 세종시청 "), candidates)
         query, parameters = driver.calls[0]
         self.assertIn("CONTAINS", query)
-        self.assertIn("ORDER BY exact_match DESC", query)
+        self.assertIn("ORDER BY exact_match DESC, prefix_match DESC", query)
         self.assertIn("stop.stop_id AS stop_id", query)
         self.assertEqual(parameters["name_query"], "세종시청")
+
+    def test_selected_stop_lookup_uses_id_and_requires_routeable_occurrence(self) -> None:
+        selected = {"stop_id": "chosen", "stop_name": "동명", "line_names": ["1001"]}
+        driver = FakeDriver([selected])
+        repository = V2TransitRepository(driver)
+
+        self.assertEqual(repository.find_stop_by_id(" chosen "), selected)
+        query, parameters = driver.calls[0]
+        self.assertIn("stop.stop_id AS stop_id", query)
+        self.assertIn("StopOccurrence", query)
+        self.assertIn("line.name", query)
+        self.assertEqual(parameters["stop_id"], "chosen")
+        self.assertIsNone(V2TransitRepository(FakeDriver([])).find_stop_by_id("missing"))
 
 
 class DirectRouteTests(unittest.TestCase):

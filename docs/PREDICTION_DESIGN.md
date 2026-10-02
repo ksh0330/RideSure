@@ -2,7 +2,7 @@
 
 ## 구현된 요청 흐름
 
-2026-08-21 현재 `/api/predict`는 Neo4j v2의 실제 topology와 historical 관측을 사용한다.
+`/api/predict`는 로컬에 적재된 Neo4j v2 topology와 historical 관측을 조회한다. 새 클론에는 DB가 포함되지 않으므로 ETL을 먼저 실행해야 한다.
 
 ```text
 origin/destination text + optional Kakao coordinates + date/time
@@ -15,7 +15,7 @@ origin/destination text + optional Kakao coordinates + date/time
   -> Kakao markers and optional stop-to-stop polyline
 ```
 
-현재 기본 graph의 historical Stop에는 좌표가 없으므로 실제 입력은 정류장명 검색 fallback을 주로 사용한다. 좌표가 전달되어도 매핑된 routeable Stop이 없으면 좌표를 조작하지 않고 텍스트 후보를 찾는다.
+기본 ETL의 historical Stop에는 좌표가 없으므로 정류장명 검색 fallback을 사용한다. 좌표가 전달되어도 매핑된 routeable Stop이 없으면 좌표를 조작하지 않고 텍스트 후보를 찾는다.
 
 ## API 계약
 
@@ -24,7 +24,12 @@ origin/destination text + optional Kakao coordinates + date/time
 - 필수: `origin`, `destination`
 - 선택: `departure_time` (`HH:MM`, 기본 09시), `date` (`YYYY-MM-DD`, 기본 `TARGET_DATE`)
 - 선택: `origin_lat`/`origin_lon`, `destination_lat`/`destination_lon`
+- 선택: 검색 결과에서 고른 `origin_stop_id`, `destination_stop_id`
 - 각 좌표 쌍은 함께 제공해야 하며 위도 `-90..90`, 경도 `-180..180`을 검증한다.
+
+`GET /api/stops/search?q=<정류장명>&limit=10`은 경로에 연결된 Stop만 최대 20개까지 반환한다. 부분 이름 검색을 허용하고 정확 일치, 접두 일치, 나머지 부분 일치 순으로 정렬한다. 응답에는 `stop_id`, 이름, 노선명, occurrence 수, 실제로 존재하는 좌표가 포함된다. 동명 Stop ID가 여러 개면 각각 별도 후보로 반환한다. UI에서 후보를 고르면 해당 ID를 `/api/predict`에 보내며, 입력 텍스트를 수정하면 선택을 해제한다.
+
+선택한 ID가 있으면 해당 Stop ID로 조회한다. 없는 ID는 오류로 처리하며 입력 이름으로 조용히 대체하지 않는다. ID를 보내지 않은 기존 호출은 이름 기반 후보 검색을 유지한다. Historical ETL 자체가 이름만으로 Stop을 만든다는 한계는 이 API로 해결되지 않으며 공식 ID 매핑이 필요하다.
 
 응답의 각 `routes[]`는 line/pattern, occurrence별 정류장, 선택 좌표, geometry 종류, historical/realtime 근거와 상대 혼잡 안내를 담는다. 핵심 혼잡 필드는 다음과 같다.
 
@@ -57,7 +62,7 @@ origin StopOccurrence - NEXT* -> destination StopOccurrence
 
 B1 기준은 대전역 `seq=2` → 세종시청 `seq=13`의 11-hop, 반대 방향 세종시청 `seq=42` → 대전역 `seq=52` 경로다. `오송역2.3.4`의 `seq=27`, `seq=28`도 독립 occurrence로 남는다.
 
-현재 대안은 다른 direct RoutePattern 후보뿐이며 최대 3개 경로 중 첫 번째가 추천 경로다. 환승 탐색과 소요시간 계산은 구현하지 않았다.
+현재 대안은 다른 direct RoutePattern 후보뿐이며 최대 3개 경로 중 첫 번째가 추천 경로다. 근접 정류장 후보와 hop 수로 정렬하며 혼잡 값을 경로 순위에 반영하지 않는다. 환승 탐색과 소요시간 계산은 구현하지 않았다.
 
 ## 혼잡과 fallback
 
@@ -86,7 +91,7 @@ Realtime 조회와 stale 판정은 준비되어 있으나 importer가 없으므�
 
 ## 좌표와 지도
 
-Historical CSV에는 공식 stop ID와 좌표가 없다. 기본 graph의 historical Stop은 `UNMAPPED_NAME_ONLY`이고 현재 좌표 커버리지는 0이다. `public_data.py`가 official Stop과 `RouteStopStaging`을 적재할 수 있지만 검증된 historical 매핑을 자동 생성하지 않는다.
+Historical CSV에는 공식 stop ID와 좌표가 없다. 기본 ETL의 historical Stop은 `UNMAPPED_NAME_ONLY`이고 좌표가 없다. `public_data.py`가 official Stop과 `RouteStopStaging`을 적재할 수 있지만 검증된 historical 매핑을 자동 생성하지 않는다.
 
 선택한 경로의 모든 StopOccurrence가 실제 좌표를 가질 때만 API는 다음을 반환한다.
 

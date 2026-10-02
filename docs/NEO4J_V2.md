@@ -38,7 +38,9 @@ Historical ID는 source-local hash이며 공식 ID처럼 보이지 않는다. `L
 
 Historical source에 공식 방향값이 없어 `direction_status='UNKNOWN'`이며, Stop은 공식 매핑 전 `UNMAPPED_NAME_ONLY`다. 동명 정류장 구분은 검증된 공식 매핑이 필요하다.
 
-## 적재 기준
+## CSV에서 계산한 적재 예상 개수
+
+다음은 저장소의 세 CSV에 `data_insert_v2.py profile`을 적용해 확인한 topology/관측 예상 개수다. 새 클론의 Neo4j는 비어 있으며 아래 개수가 실제 DB에 존재한다고 뜻하지 않는다. import 후 `verify`로 적재 상태를 확인한다.
 
 | Node | 개수 | Relationship | 개수 |
 |---|---:|---|---:|
@@ -76,23 +78,23 @@ Historical source에 공식 방향값이 없어 `direction_status='UNKNOWN'`이�
 .\.venv\Scripts\python.exe .\public_data.py fetch-tago --city-code <official-city-code> --route-id <official-route-id> --import-to-neo4j
 ```
 
-실제 key·파일은 현재 `NOT_CONFIGURED`이고 live official record를 적재하지 않았다. 따라서 historical Stop 좌표 커버리지와 B1 공식 mapping은 0이다. Official Stop과 historical Stop/RoutePattern은 이름만으로 병합하지 않는다. `tests/fixtures/`는 실제 B1 응답이 아닌 synthetic schema fixture다.
+공식 자료와 API 키는 저장소에 포함되지 않는다. 각 컴퓨터의 설정 여부는 `public_data.py status`로 확인한다. 제공된 ETL은 historical Stop에 좌표를 설정하거나 B1 공식 mapping을 만들지 않는다. Official Stop과 historical Stop/RoutePattern은 이름만으로 병합하지 않는다. `tests/fixtures/`는 실제 B1 응답이 아닌 synthetic schema fixture다.
 
 ## API에서의 사용
 
 `prediction_v2.V2TransitRepository`가 다음을 제공한다.
 
-- routeable Stop name/nearby 후보
+- routeable Stop name/nearby 후보와 Stop ID 선택 조회
 - occurrence ID를 보존하는 direct route와 ordered stops
 - 모든 정류장에 실제 좌표가 있을 때만 stop-to-stop geometry
 - fresh realtime → exact historical → profile → unknown 혼잡 근거
 
-`service.py`는 최대 3개 direct pattern을 비교해 첫 경로를 추천하고 나머지를 alternative로 반환한다. Historical 관측이 없으면 0을 만들지 않고 `UNKNOWN/데이터 부족`을 반환한다. `boarding_probability`는 nullable deprecated field이며 항상 `null`이다.
+`service.py`는 최대 3개 direct pattern을 근접 후보·hop 수로 정렬해 첫 경로를 추천하고 나머지를 alternative로 반환한다. 현재 혼잡 수치는 ranking 점수에 들어가지 않는다. Historical 관측이 없으면 0을 만들지 않고 `UNKNOWN/데이터 부족`을 반환한다. `boarding_probability`는 nullable deprecated field이며 항상 `null`이다.
 
 ## 제한
 
 - official B1 ID/sequence와 historical occurrence mapping 미완료
-- historical routeable Stop 좌표 0, 기본 geometry `UNAVAILABLE`
+- 기본 historical ETL에는 좌표 매핑이 없어 geometry `UNAVAILABLE`
 - official road/route shape와 환승 탐색 미구현
 - realtime importer 및 `LoadProfile` 생성 batch 미구현
 - 차량 정원·대기열·탑승 성공 label 부재

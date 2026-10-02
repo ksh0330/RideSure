@@ -139,7 +139,9 @@ class V2TransitRepository:
              collect(DISTINCT pattern.pattern_id) AS pattern_ids,
              collect(DISTINCT line.name) AS line_names,
              CASE WHEN toLower(stop.name) = toLower($name_query) THEN true ELSE false END
-                 AS exact_match
+                 AS exact_match,
+             CASE WHEN toLower(stop.name) STARTS WITH toLower($name_query)
+                  THEN true ELSE false END AS prefix_match
         RETURN stop.stop_id AS stop_id,
                stop.name AS stop_name,
                properties(stop)['lat'] AS lat,
@@ -149,13 +151,34 @@ class V2TransitRepository:
                occurrence_count,
                pattern_ids,
                line_names
-        ORDER BY exact_match DESC, stop.name, stop.stop_id
+        ORDER BY exact_match DESC, prefix_match DESC, stop.name, stop.stop_id
         LIMIT $limit
         """
         with self.driver.session() as session:
             return session.run(
                 query, name_query=normalized_query, limit=limit
             ).data()
+
+    def find_stop_by_id(self, stop_id: str) -> dict[str, Any] | None:
+        """Resolve one routeable Stop by identity, without a name fallback."""
+        if not isinstance(stop_id, str) or not stop_id.strip():
+            raise ValueError("stop_id must not be empty")
+        query = """
+        MATCH (stop:Stop {stop_id: $stop_id})<-[:AT_STOP]-(occurrence:StopOccurrence)
+              <-[:HAS_OCCURRENCE]-(pattern:RoutePattern)
+              <-[:HAS_PATTERN]-(line:Line)
+        RETURN stop.stop_id AS stop_id,
+               stop.name AS stop_name,
+               properties(stop)['lat'] AS lat,
+               properties(stop)['lon'] AS lon,
+               stop.source AS source,
+               count(DISTINCT occurrence) AS occurrence_count,
+               collect(DISTINCT pattern.pattern_id) AS pattern_ids,
+               collect(DISTINCT line.name) AS line_names
+        """
+        with self.driver.session() as session:
+            record = session.run(query, stop_id=stop_id.strip()).single()
+        return dict(record) if record else None
 
     def find_direct_routes(
         self,

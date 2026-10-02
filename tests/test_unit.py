@@ -208,6 +208,81 @@ class PredictionV2ServiceTests(unittest.TestCase):
         repository.resolve_congestion.assert_called_once_with(
             "hist-pattern-b1", "o-origin", "2025-11-08", 8
         )
+        repository.find_direct_routes.assert_called_once_with(
+            "대전역", "세종시청.교육청.시의회", limit=20,
+            origin_stop_id=None, destination_stop_id=None,
+        )
+
+    def test_selected_stop_ids_drive_route_without_name_reresolution(self) -> None:
+        repository = Mock()
+        repository.find_stop_by_id.side_effect = [
+            {"stop_id": "s-origin", "stop_name": "동명"},
+            {"stop_id": "s-destination", "stop_name": "도착"},
+        ]
+        route = v2_route()
+        route.update(
+            origin_stop_id="s-origin",
+            destination_stop_id="s-destination",
+            origin_occurrence_id="o-origin",
+            destination_occurrence_id="o-destination",
+            hops=1,
+        )
+        repository.find_direct_routes.return_value = [route]
+        repository.resolve_congestion.return_value = {
+            "source": "UNKNOWN", "status": "INSUFFICIENT_DATA",
+            "onboard_count": None, "relative_percentile": None,
+            "congestion_level": "UNKNOWN", "boarding_guidance": "데이터 부족",
+            "sample_size": 0,
+        }
+        service = BusPredictionService.__new__(BusPredictionService)
+        service.repository = repository
+        service.predict_with_llm = Mock(return_value="structured explanation")
+
+        result = service.predict_boarding(
+            "입력한 출발지", "입력한 도착지",
+            origin_lat=36.3, origin_lon=127.4,
+            origin_stop_id="s-origin", destination_stop_id="s-destination",
+        )
+
+        self.assertEqual(result["origin"], "입력한 출발지")
+        self.assertEqual(result["destination"], "입력한 도착지")
+        self.assertEqual(result["routes"][0]["line_name"], "B1")
+        repository.find_stops_by_name.assert_not_called()
+        repository.find_nearby_stops.assert_not_called()
+        repository.find_direct_routes.assert_called_once_with(
+            "동명", "도착", limit=20,
+            origin_stop_id="s-origin", destination_stop_id="s-destination",
+        )
+
+    def test_selected_ambiguous_stop_is_not_replaced_by_same_named_stop(self) -> None:
+        repository = Mock()
+        repository.find_stop_by_id.return_value = {"stop_id": "chosen", "stop_name": "동명"}
+        repository.find_stops_by_name.return_value = [
+            {"stop_id": "destination", "stop_name": "도착"}
+        ]
+        repository.find_direct_routes.return_value = [
+            {"pattern_id": "wrong", "origin_stop_id": "other", "destination_stop_id": "destination"}
+        ]
+        service = BusPredictionService.__new__(BusPredictionService)
+        service.repository = repository
+
+        with self.assertRaisesRegex(ValueError, "직접 노선"):
+            service.predict_boarding("동명", "도착", origin_stop_id="chosen")
+
+        repository.find_direct_routes.assert_called_once_with(
+            "동명", "도착", limit=20,
+            origin_stop_id="chosen", destination_stop_id=None,
+        )
+
+    def test_unknown_selected_stop_id_does_not_fall_back_to_text(self) -> None:
+        repository = Mock()
+        repository.find_stop_by_id.return_value = None
+        service = BusPredictionService.__new__(BusPredictionService)
+        service.repository = repository
+
+        with self.assertRaisesRegex(ValueError, "선택한 정류장 ID"):
+            service.predict_boarding("동명", "도착", origin_stop_id="missing")
+        repository.find_stops_by_name.assert_not_called()
 
     def test_llm_failure_keeps_deterministic_structured_explanation(self) -> None:
         service = BusPredictionService.__new__(BusPredictionService)

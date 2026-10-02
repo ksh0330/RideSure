@@ -119,6 +119,34 @@ class PredictionApiV2ContractTests(unittest.TestCase):
         self.assertEqual(kwargs["origin_lat"], 36.332)
         self.assertEqual(kwargs["destination_lon"], 127.289)
 
+    def test_selected_stop_ids_are_forwarded_with_original_text(self) -> None:
+        fake_service = Mock()
+        fake_service.predict_boarding.return_value = _v2_result()
+        with patch.object(app_module, "get_service", return_value=fake_service):
+            response = self.client.post(
+                "/api/predict",
+                json={
+                    "origin": "사용자가 입력한 출발지",
+                    "destination": "사용자가 입력한 도착지",
+                    "origin_stop_id": " stop-origin ",
+                    "destination_stop_id": "stop-destination",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        kwargs = fake_service.predict_boarding.call_args.kwargs
+        self.assertEqual(kwargs["origin"], "사용자가 입력한 출발지")
+        self.assertEqual(kwargs["destination"], "사용자가 입력한 도착지")
+        self.assertEqual(kwargs["origin_stop_id"], "stop-origin")
+        self.assertEqual(kwargs["destination_stop_id"], "stop-destination")
+
+    def test_blank_stop_id_is_rejected(self) -> None:
+        response = self.client.post(
+            "/api/predict",
+            json={"origin": "대전역", "destination": "세종시청", "origin_stop_id": "   "},
+        )
+        self.assertEqual(response.status_code, 422)
+
     def test_unpaired_or_out_of_range_coordinates_are_rejected(self) -> None:
         unpaired = self.client.post(
             "/api/predict",
@@ -153,6 +181,60 @@ class PredictionApiV2ContractTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("직접 노선", response.json()["detail"])
+
+
+class StopSearchApiTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client = TestClient(app_module.app)
+
+    def test_search_keeps_distinct_ids_and_real_coordinates(self) -> None:
+        fake_service = Mock()
+        fake_service.search_stops.return_value = [
+            {
+                "stop_id": "exact-a",
+                "stop_name": "세종시청",
+                "line_names": ["B1", "1001"],
+                "occurrence_count": 3,
+                "exact_match": True,
+                "lat": None,
+                "lon": None,
+            },
+            {
+                "stop_id": "exact-b",
+                "stop_name": "세종시청",
+                "line_names": ["2001"],
+                "occurrence_count": 1,
+                "exact_match": True,
+                "lat": 36.48,
+                "lon": 127.29,
+            },
+        ]
+        with patch.object(app_module, "get_service", return_value=fake_service):
+            response = self.client.get("/api/stops/search", params={"q": " 세종시청 ", "limit": 2})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["q"], "세종시청")
+        stops = response.json()["stops"]
+        self.assertEqual([stop["stop_id"] for stop in stops], ["exact-a", "exact-b"])
+        self.assertEqual(stops[0]["line_names"], ["B1", "1001"])
+        self.assertIsNone(stops[0]["lat"])
+        self.assertEqual(stops[1]["lat"], 36.48)
+        fake_service.search_stops.assert_called_once_with("세종시청", 2)
+
+    def test_search_rejects_empty_or_unbounded_queries(self) -> None:
+        requests = [
+            {},
+            {"q": "   "},
+            {"q": "x" * 101},
+            {"q": "대전", "limit": 0},
+            {"q": "대전", "limit": 21},
+        ]
+        with patch.object(app_module, "get_service") as get_service:
+            for params in requests:
+                with self.subTest(params=params):
+                    response = self.client.get("/api/stops/search", params=params)
+                    self.assertEqual(response.status_code, 422)
+        get_service.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -86,6 +86,53 @@ class HistoricalV2TransformTests(unittest.TestCase):
         self.assertEqual(profile["source_local_stops"], 2_049)
         self.assertEqual(profile["parse_status"], {"VALID": 273_000, "MISSING": 0, "INVALID": 0})
 
+    def test_b1_source_preserves_both_paths_and_hourly_counts(self) -> None:
+        sources = data_insert_v2.load_sources(config.INPUT_FILES)
+        topology = data_insert_v2.build_topology_rows(sources)
+        b1 = [row for row in topology if row["raw_line"] == "B1"]
+        self.assertEqual(len(b1), 53)
+        self.assertEqual(len({row["pattern_id"] for row in b1}), 1)
+        self.assertEqual(
+            [row["seq"] for row in b1 if row["raw_stop_name"] == "오송역2.3.4"],
+            [27, 28],
+        )
+        self.assertEqual(
+            [row["seq"] for row in b1 if row["raw_stop_name"] == "대전역"],
+            [2, 52],
+        )
+        self.assertEqual(
+            [row["seq"] for row in b1 if "세종시청" in row["raw_stop_name"]],
+            [13, 42],
+        )
+        lookup = data_insert_v2.topology_lookup(topology)
+        counts = {
+            row["hour"]: row["onboard_count"]
+            for source in sources
+            for row in data_insert_v2.iter_observation_rows(source, lookup, "TEST")
+            if row["raw_line"] == "B1"
+            and row["raw_stop_name"] == "대전역"
+            and row["raw_stop_seq"] == 2
+            and row["hour"] in (8, 9)
+        }
+        self.assertEqual(counts, {8: 17, 9: 24})
+
+    def test_non_b1_patterns_offer_direct_segments(self) -> None:
+        topology = data_insert_v2.build_topology_rows(
+            data_insert_v2.load_sources(config.INPUT_FILES)
+        )
+        patterns: dict[str, list[dict]] = {}
+        for row in topology:
+            if row["raw_line"] != "B1":
+                patterns.setdefault(row["pattern_id"], []).append(row)
+        usable = [
+            rows for rows in patterns.values()
+            if len(rows) >= 4 and rows[0]["stop_id"] != rows[3]["stop_id"]
+            and [row["seq"] for row in rows[:4]]
+                == list(range(rows[0]["seq"], rows[0]["seq"] + 4))
+        ]
+        self.assertGreaterEqual(len(usable), 5)
+        self.assertGreaterEqual(len({rows[0]["raw_line"] for rows in usable}), 5)
+
 
 class CongestionTests(unittest.TestCase):
     def test_relative_level_is_not_a_boarding_probability(self) -> None:

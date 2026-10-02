@@ -6,11 +6,11 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 import config
 from service import get_service
@@ -54,6 +54,15 @@ class PredictionRequest(BaseModel):
     origin_lon: Optional[float] = Field(default=None, ge=-180, le=180)
     destination_lat: Optional[float] = Field(default=None, ge=-90, le=90)
     destination_lon: Optional[float] = Field(default=None, ge=-180, le=180)
+    origin_stop_id: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    destination_stop_id: Optional[str] = Field(default=None, min_length=1, max_length=200)
+
+    @field_validator("origin_stop_id", "destination_stop_id")
+    @classmethod
+    def stop_id_is_not_blank(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("stop ID must not be blank")
+        return value.strip() if value is not None else None
 
     @model_validator(mode="after")
     def coordinates_are_paired(self) -> "PredictionRequest":
@@ -122,6 +131,21 @@ class FrontendConfig(BaseModel):
     kakao_map_javascript_key: str
 
 
+class StopSearchCandidate(BaseModel):
+    stop_id: str
+    stop_name: str
+    line_names: List[str] = Field(default_factory=list)
+    occurrence_count: int = Field(ge=1)
+    exact_match: bool
+    lat: Optional[float] = Field(default=None, ge=-90, le=90)
+    lon: Optional[float] = Field(default=None, ge=-180, le=180)
+
+
+class StopSearchResponse(BaseModel):
+    q: str
+    stops: List[StopSearchCandidate]
+
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
@@ -141,6 +165,23 @@ async def frontend_config() -> FrontendConfig:
             ),
         )
     return FrontendConfig(kakao_map_javascript_key=config.KAKAO_MAP_JAVASCRIPT_KEY)
+
+
+@app.get("/api/stops/search", response_model=StopSearchResponse)
+async def search_stops(
+    q: str = Query(min_length=1, max_length=100),
+    limit: int = Query(default=10, ge=1, le=20),
+) -> StopSearchResponse:
+    query = q.strip()
+    if not query:
+        raise HTTPException(status_code=422, detail="q must contain a stop name")
+    try:
+        return StopSearchResponse(q=query, stops=get_service().search_stops(query, limit))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("Stop search failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="정류장 검색 중 서버 오류가 발생했습니다.") from exc
 
 
 @app.get("/health")
@@ -186,6 +227,8 @@ async def predict_boarding(request: PredictionRequest) -> PredictionResponse:
             origin_lon=request.origin_lon,
             destination_lat=request.destination_lat,
             destination_lon=request.destination_lon,
+            origin_stop_id=request.origin_stop_id,
+            destination_stop_id=request.destination_stop_id,
         )
         return PredictionResponse(**result)
     except ValueError as exc:

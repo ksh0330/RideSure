@@ -47,6 +47,9 @@ class BusPredictionService:
             logger.warning("Neo4j v2 connection check failed: %s", exc)
             return False
 
+    def search_stops(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
+        return self.repository.find_stops_by_name(query, limit=limit)
+
     @staticmethod
     def _parse_inputs(departure_time: str | None, service_date: str) -> tuple[int, str]:
         if departure_time:
@@ -72,7 +75,17 @@ class BusPredictionService:
         text: str,
         latitude: float | None,
         longitude: float | None,
+        stop_id: str | None = None,
     ) -> list[dict[str, Any]]:
+        if stop_id is not None:
+            selected = self.repository.find_stop_by_id(stop_id)
+            if selected is None:
+                raise ValueError(f"선택한 정류장 ID를 찾지 못했습니다: {stop_id}")
+            name = self._candidate_name(selected)
+            if not name:
+                raise ValueError(f"선택한 정류장에 이름이 없습니다: {stop_id}")
+            return [{**selected, "name": name, "_selected": True}]
+
         candidates: list[dict[str, Any]] = []
         if latitude is not None and longitude is not None:
             candidates.extend(
@@ -136,12 +149,20 @@ class BusPredictionService:
         candidates: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = []
         for origin in origin_candidates[:8]:
             for destination in destination_candidates[:8]:
-                if origin["name"] == destination["name"]:
+                origin_id = origin.get("stop_id") if origin.get("_selected") else None
+                destination_id = destination.get("stop_id") if destination.get("_selected") else None
+                if not origin_id and not destination_id and origin["name"] == destination["name"]:
                     continue
                 direct_routes = self.repository.find_direct_routes(
-                    origin["name"], destination["name"], limit=20
+                    origin["name"], destination["name"], limit=20,
+                    origin_stop_id=origin_id,
+                    destination_stop_id=destination_id,
                 )
                 for route in direct_routes:
+                    if origin_id and route.get("origin_stop_id") != origin_id:
+                        continue
+                    if destination_id and route.get("destination_stop_id") != destination_id:
+                        continue
                     candidates.append((route, origin, destination))
 
         def rank(item: tuple[dict[str, Any], dict[str, Any], dict[str, Any]]) -> tuple:
@@ -323,15 +344,17 @@ class BusPredictionService:
         origin_lon: float | None = None,
         destination_lat: float | None = None,
         destination_lon: float | None = None,
+        origin_stop_id: str | None = None,
+        destination_stop_id: str | None = None,
     ) -> dict[str, Any]:
         origin = origin.strip()
         destination = destination.strip()
         if not origin or not destination:
             raise ValueError("origin and destination are required")
         hour, service_date = self._parse_inputs(departure_time, date)
-        origin_candidates = self._stop_candidates(origin, origin_lat, origin_lon)
+        origin_candidates = self._stop_candidates(origin, origin_lat, origin_lon, origin_stop_id)
         destination_candidates = self._stop_candidates(
-            destination, destination_lat, destination_lon
+            destination, destination_lat, destination_lon, destination_stop_id
         )
         if not origin_candidates:
             raise ValueError(f"출발지와 일치하는 정류장을 찾지 못했습니다: {origin}")
