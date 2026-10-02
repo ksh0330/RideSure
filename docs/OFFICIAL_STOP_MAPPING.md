@@ -16,24 +16,33 @@ direction change, the whole ordered sequence is used. If node orders restart
 in each direction, select one with `--direction-code`. A missing direction
 code is kept unknown, not invented.
 
-- `EXACT`: at least three ordered historical stops match the complete selected
-  official sequence. Each occurrence maps by its own position, including
-  repeated names.
-- `SEQUENCE_MATCH`: the full sequences differ, but a historical occurrence has
-  one official candidate with the same name and adjacent ordered neighbors.
-  Interior stops need both neighbors; endpoints need their one neighbor. All
-  accepted matches must keep strictly increasing official order.
-- `AMBIGUOUS`: multiple contextual candidates, multiple unselected official
-  directions, or conflicting order. No edge is written.
-- `UNMATCHED`: no sufficient sequence evidence. No edge is written.
+- `EXACT`: at least three historical occurrences match the complete selected
+  official sequence after deterministic presentation normalization. Each
+  occurrence maps by its own position, including repeated names.
+- `SEQUENCE_MATCH`: the full sequences differ, but a historical occurrence is
+  matched to one official position in **every** maximum-length monotonic
+  one-to-one alignment of equal normalized names. Official-side insertions
+  and renamed stops may remain gaps. At least three names must match across
+  the route before any partial mapping is verified.
+- `AMBIGUOUS`: an occurrence has multiple optimal official positions, can be
+  skipped in another optimal alignment, or has unselected competing route
+  directions. No edge is written.
+- `UNMATCHED`: no safe normalized-name alignment, including semantic renames.
+  No edge is written.
 
-Names are normalized only with Unicode NFKC and whitespace folding. This is
-deliberately strict. A single matching name, even with an official node ID,
-does not create a mapping. Changed route segments may remain unmapped until
-the historical and official topology can be checked manually.
+Name normalization uses Unicode NFKC and folds whitespace, periods, commas,
+or middle dots **only between Hangul syllables**. Digits, numeric punctuation,
+brackets, qualifiers, and word order remain meaningful. There is no fuzzy
+matching or semantic alias table. A single matching name, even with an
+official node ID, does not create a mapping. The preview records each
+occurrence's possible official orders across optimal alignments, whether the
+occurrence can be skipped, and whether its approved name was raw-exact or
+presentation-normalized. Changed route segments may remain unmapped until
+their physical identity can be checked separately.
 
-The edge records mapping method/status, official source, route ID, node ID,
-direction/order, staging ID, route-binding source, and coordinate source.
+The edge records mapping method/status, normalized name and match kind,
+official source, route ID, node ID, direction/order, staging ID, route-binding
+source, and coordinate source.
 Coordinates are read through this edge only for `EXACT`/`SEQUENCE_MATCH`;
 they are never copied onto the historical name-based `Stop`. This mapping is
 not yet used by the routing service or frontend.

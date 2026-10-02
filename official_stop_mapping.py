@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import unicodedata
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable
 
 import config
@@ -47,6 +47,7 @@ class MappingDecision:
     status: str
     method: str
     official: OfficialRouteOccurrence | None = None
+    evidence: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.status not in MAPPING_STATUSES:
@@ -70,7 +71,60 @@ class MappingPlan:
 
 
 def _name(value: str) -> str:
-    return " ".join(unicodedata.normalize("NFKC", value).split())
+    # Fold presentation separators only between Hangul syllables. Digits,
+    # dashes, brackets, qualifiers, and word order stay meaningful: for
+    # example, 오송역2.3.4 must not become equal to 오송역234.
+    normalized = unicodedata.normalize("NFKC", value)
+    separators = {".", ",", "·"}
+    result: list[str] = []
+    for index, character in enumerate(normalized):
+        if character.isspace() or character in separators:
+            left = next((c for c in reversed(normalized[:index]) if not c.isspace() and c not in separators), "")
+            right = next((c for c in normalized[index + 1:] if not c.isspace() and c not in separators), "")
+            if "가" <= left <= "힣" and "가" <= right <= "힣":
+                continue
+        result.append(character)
+    return " ".join("".join(result).split())
+
+
+def _global_alignment_candidates(
+    historical_names: list[str], official_names: list[str]
+) -> tuple[list[list[int]], list[bool], int]:
+    """All pairs belonging to any longest monotonic one-to-one name alignment.
+
+    The forward/backward LCS tables also show whether an occurrence can be
+    skipped in another optimal alignment. Only a mandatory pair with exactly
+    one possible official position is safe to verify.
+    """
+    n, m = len(historical_names), len(official_names)
+    forward = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(n):
+        for j in range(m):
+            forward[i + 1][j + 1] = (
+                forward[i][j] + 1 if historical_names[i] == official_names[j]
+                else max(forward[i][j + 1], forward[i + 1][j])
+            )
+    backward = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(n - 1, -1, -1):
+        for j in range(m - 1, -1, -1):
+            backward[i][j] = (
+                backward[i + 1][j + 1] + 1 if historical_names[i] == official_names[j]
+                else max(backward[i + 1][j], backward[i][j + 1])
+            )
+    best = forward[n][m]
+    candidates = [
+        [
+            j for j in range(m)
+            if historical_names[i] == official_names[j]
+            and forward[i][j] + 1 + backward[i + 1][j + 1] == best
+        ]
+        for i in range(n)
+    ]
+    can_skip = [
+        max(forward[i][j] + backward[i + 1][j] for j in range(m + 1)) == best
+        for i in range(n)
+    ]
+    return candidates, can_skip, best
 
 
 def build_mapping_plan(
@@ -82,11 +136,12 @@ def build_mapping_plan(
     route_binding_source: str,
     direction_code: str | None = None,
 ) -> MappingPlan:
-    """Map only a bound route's unique full sequence or unique neighbor context.
+    """Map only mandatory pairs in a bound route's global ordered alignment.
 
-    The binding source records how a human checked that the opaque TAGO route ID
-    belongs to the historical line. If multiple official directions exist, the
-    direction must also be selected explicitly. Changed segments remain unmapped.
+    The binding source records how the opaque TAGO route ID was checked against
+    the historical line. Continuous official numbering spans direction changes;
+    overlapping per-direction numbering requires an explicit selection.
+    Semantic name changes stay unmatched; this matcher never guesses aliases.
     """
     if not line_name.strip() or not official_route_id.strip() or not route_binding_source.strip():
         raise ValueError("line_name, official_route_id, and route_binding_source are required.")
@@ -153,55 +208,35 @@ def build_mapping_plan(
     route = next(iter(groups.values()))
     historical_names = [_name(row.name) for row in history]
     official_names = [_name(row.name) for row in route]
-    if len(history) >= 3 and historical_names == official_names:
-        return plan("EXACT", "BOUND_FULL_ORDERED_SEQUENCE", route)
-
-    candidates: list[list[tuple[int, OfficialRouteOccurrence]]] = []
-    for index, name in enumerate(historical_names):
-        matches: list[tuple[int, OfficialRouteOccurrence]] = []
-        for off_index, off_name in enumerate(official_names):
-            if name != off_name:
-                continue
-            left = (
-                index > 0 and off_index > 0
-                and historical_names[index - 1] == official_names[off_index - 1]
-            )
-            right = (
-                index + 1 < len(history) and off_index + 1 < len(route)
-                and historical_names[index + 1] == official_names[off_index + 1]
-            )
-            # Interior stops need both neighbors; endpoints need their one neighbor.
-            if len(history) >= 3 and (
-                (index == 0 and right)
-                or (index == len(history) - 1 and left)
-                or (0 < index < len(history) - 1 and left and right)
-            ):
-                matches.append((off_index, route[off_index]))
-        candidates.append(matches)
-
+    full_match = len(history) >= 3 and historical_names == official_names
+    candidates, can_skip, shared_count = _global_alignment_candidates(historical_names, official_names)
     decisions: list[MappingDecision] = []
     for index, row in enumerate(history):
-        matches = candidates[index]
-        if len(matches) == 1:
-            decisions.append(MappingDecision(row, "SEQUENCE_MATCH", "UNIQUE_ADJACENT_SEQUENCE", matches[0][1]))
+        possible = candidates[index]
+        evidence = {
+            "normalization": "NFKC_FOLD_HANGUL_SEPARATORS",
+            "normalized_name": historical_names[index],
+            "possible_official_orders": [route[j].node_order for j in possible],
+            "can_skip_in_optimal_alignment": can_skip[index],
+        }
+        if full_match:
+            chosen = route[index]
+            evidence["name_match_kind"] = "RAW_EXACT" if row.name == chosen.name else "PRESENTATION_NORMALIZED"
+            decisions.append(MappingDecision(row, "EXACT", "BOUND_FULL_ORDERED_SEQUENCE", chosen, evidence))
+        elif shared_count < 3:
+            decisions.append(MappingDecision(row, "UNMATCHED", "INSUFFICIENT_GLOBAL_NAME_ANCHORS", evidence=evidence))
+        elif len(possible) == 1 and not can_skip[index]:
+            chosen = route[possible[0]]
+            evidence["name_match_kind"] = "RAW_EXACT" if row.name == chosen.name else "PRESENTATION_NORMALIZED"
+            decisions.append(MappingDecision(row, "SEQUENCE_MATCH", "MANDATORY_UNIQUE_GLOBAL_ALIGNMENT", chosen, evidence))
+        elif possible:
+            decisions.append(MappingDecision(row, "AMBIGUOUS", "MULTIPLE_OPTIMAL_ALIGNMENTS", evidence=evidence))
         else:
-            same_name_count = official_names.count(historical_names[index])
-            status = "AMBIGUOUS" if len(matches) > 1 or same_name_count > 1 else "UNMATCHED"
-            method = "MULTIPLE_OR_UNPROVEN_CANDIDATES" if status == "AMBIGUOUS" else "NO_ADJACENT_EVIDENCE"
-            decisions.append(MappingDecision(row, status, method))
+            decisions.append(MappingDecision(row, "UNMATCHED", "NO_GLOBAL_NAME_ALIGNMENT", evidence=evidence))
 
-    # A route occurrence cannot represent two historical occurrences; all
-    # verified matches must also preserve the official order.
-    positions = [
-        (i, candidates[i][0][0]) for i, decision in enumerate(decisions)
-        if decision.official is not None
-    ]
-    if any(right[1] <= left[1] for left, right in zip(positions, positions[1:])):
-        decisions = [
-            MappingDecision(decision.historical, "AMBIGUOUS", "NON_MONOTONIC_OR_REUSED_ORDER")
-            if decision.official is not None else decision
-            for decision in decisions
-        ]
+    positions = [d.official.node_order for d in decisions if d.official is not None]
+    if any(right <= left for left, right in zip(positions, positions[1:])):
+        raise AssertionError("Global alignment yielded crossing or reused official occurrences.")
     return MappingPlan(
         pattern_id, line_name, official_route_id, route_binding_source,
         direction_code, tuple(decisions),
@@ -285,6 +320,8 @@ def apply_mapping_plan(tx: Any, mapping: MappingPlan) -> int:
             "stop_name": official.name,
             "status": decision.status,
             "method": decision.method,
+            "normalized_name": decision.evidence.get("normalized_name"),
+            "name_match_kind": decision.evidence.get("name_match_kind"),
             "coordinate_source": official.coordinate_source,
             "direction_code": official.direction_code,
         })
@@ -337,6 +374,8 @@ def apply_mapping_plan(tx: Any, mapping: MappingPlan) -> int:
         ON CREATE SET mapping.created_at = datetime()
         SET mapping.mapping_status = r.status,
             mapping.mapping_method = r.method,
+            mapping.normalized_name = r.normalized_name,
+            mapping.name_match_kind = r.name_match_kind,
             mapping.official_source = $tago_source,
             mapping.official_route_id = r.official_route_id,
             mapping.official_node_id = r.official_node_id,

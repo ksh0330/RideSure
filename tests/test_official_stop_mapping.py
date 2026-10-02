@@ -74,7 +74,7 @@ class MappingPlanTests(unittest.TestCase):
         self.assertEqual([d.status for d in repeated], ["EXACT", "EXACT"])
         self.assertNotEqual(repeated[0].official.staging_id, repeated[1].official.staging_id)
 
-    def test_current_b1_snapshot_requires_turnaround_review(self) -> None:
+    def test_current_b1_snapshot_maps_turnaround_without_filling_new_stops(self) -> None:
         root = Path(__file__).resolve().parents[1]
         route = read_official_route_json(
             str(root / "data/public/tago/b1_2026-10-02/b1_route_stops.json")
@@ -94,9 +94,17 @@ class MappingPlanTests(unittest.TestCase):
         self.assertEqual((len(route), len(plan.decisions)), (55, 53))
         self.assertEqual([row.node_order for row in route], list(range(1, 56)))
         self.assertEqual(
-            [(d.historical.seq, d.status) for d in plan.decisions if d.historical.name == "오송역2.3.4"],
-            [(27, "AMBIGUOUS"), (28, "AMBIGUOUS")],
+            [(d.historical.seq, d.status, d.official.node_order, d.official.official_node_id)
+             for d in plan.decisions if d.historical.name == "오송역2.3.4"],
+            [(27, "SEQUENCE_MATCH", 28, "DJB8007055"),
+             (28, "SEQUENCE_MATCH", 29, "DJB9007055")],
         )
+        positions = [d.official.node_order for d in plan.verified]
+        self.assertEqual(positions, sorted(set(positions)))
+        self.assertNotIn(11, positions)
+        self.assertNotIn(46, positions)
+        self.assertEqual(len(plan.verified), 41)
+        self.assertEqual(sum(d.status == "UNMATCHED" for d in plan.decisions), 12)
         self.assertTrue(plan.verified)
         self.assertTrue(all(d.official.lat is not None and d.official.lon is not None for d in plan.verified))
 
@@ -113,6 +121,42 @@ class MappingPlanTests(unittest.TestCase):
         plan = mapping(historical("A", "B", "C"), official("NEW", "A", "B", "C"))
         self.assertEqual([decision.status for decision in plan.decisions], ["SEQUENCE_MATCH"] * 3)
         self.assertEqual([decision.official.node_order for decision in plan.decisions], [2, 3, 4])
+
+    def test_presentation_separators_normalize_but_numeric_punctuation_does_not(self) -> None:
+        plan = mapping(
+            historical("정부세종청사남측", "보람동.대평동", "오송역2.3.4"),
+            official("정부세종청사 남측", "보람동,대평동", "오송역234"),
+        )
+        self.assertEqual([d.status for d in plan.decisions], ["UNMATCHED"] * 3)
+        exact = mapping(
+            historical("정부세종청사남측", "보람동.대평동", "오송역2.3.4"),
+            official("정부세종청사 남측", "보람동,대평동", "오송역2.3.4"),
+        )
+        self.assertEqual([d.status for d in exact.decisions], ["EXACT"] * 3)
+        self.assertEqual(exact.decisions[1].evidence["name_match_kind"], "PRESENTATION_NORMALIZED")
+
+    def test_semantic_rename_remains_unmatched_in_global_alignment(self) -> None:
+        plan = mapping(
+            historical("A", "B", "소담동", "C", "D"),
+            official("A", "B", "소담동(새샘마을)", "C", "D"),
+        )
+        self.assertEqual([d.status for d in plan.decisions],
+                         ["SEQUENCE_MATCH", "SEQUENCE_MATCH", "UNMATCHED", "SEQUENCE_MATCH", "SEQUENCE_MATCH"])
+        self.assertEqual(plan.decisions[2].evidence["possible_official_orders"], [])
+
+    def test_unique_candidate_that_can_be_skipped_stays_ambiguous(self) -> None:
+        plan = mapping(historical("A", "B", "C", "D"), official("A", "C", "B", "D"))
+        self.assertEqual(plan.decisions[1].status, "AMBIGUOUS")
+        self.assertTrue(plan.decisions[1].evidence["can_skip_in_optimal_alignment"])
+        self.assertEqual(plan.decisions[2].status, "AMBIGUOUS")
+
+    def test_alignment_is_deterministic_under_input_order_changes(self) -> None:
+        history = historical("A", "B", "B", "C")
+        route = official("A", "NEW", "B", "B", "C")
+        first = mapping(history, route)
+        second = mapping(list(reversed(history)), list(reversed(route)))
+        self.assertEqual(first, second)
+        self.assertEqual([d.official.node_order for d in first.verified], [1, 3, 4, 5])
 
     def test_same_name_without_unique_neighbor_context_stays_ambiguous(self) -> None:
         plan = mapping(
@@ -204,6 +248,9 @@ class MappingPersistenceTests(unittest.TestCase):
         self.assertNotIn("SET stop.", query)
         self.assertEqual(params["rows"][0]["official_node_id"], "node-None-1")
         self.assertEqual(params["rows"][0]["coordinate_source"], TAGO_SOURCE)
+        self.assertEqual(params["rows"][0]["normalized_name"], "A")
+        self.assertEqual(params["rows"][0]["name_match_kind"], "RAW_EXACT")
+        self.assertIn("mapping.name_match_kind = r.name_match_kind", query)
         self.assertEqual(params["route_binding_source"], plan.route_binding_source)
 
     def test_conflicting_existing_mapping_is_rejected(self) -> None:

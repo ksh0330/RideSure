@@ -20,9 +20,9 @@ The historical RideSure B1 pattern has 53 occurrences. Ordered name alignment id
 
 Punctuation/spacing variants include `보람동.대평동` → `보람동,대평동`, `새롬동.나성동` → `새롬동,나성동`, and `정부세종청사남측/북측` → names with a space before `남측/북측`. Other changed labels need separate identity review: `소담동` → `소담동(새샘마을)`, `세종터미널` → `세종고속시외버스터미널(지하)`, `해밀리` → `해밀동,산울동`, `한별리` → `한별동`, `누리리` → `누리동`. `세종시청.교육청.시의회` → `세종시청,시의회,교육청` also changes the listed component order, so it is not treated as punctuation only. Name alignment alone does not prove physical-stop identity.
 
-Historical `오송역2.3.4` occurs at sequences **27 and 28**. Current TAGO has two consecutive records at orders **28 and 29**, with distinct node IDs `DJB8007055` and `DJB9007055`, both marked direction `0`. The preview deliberately leaves both `AMBIGUOUS`; the neighboring historical/current names differ, so the current matcher has insufficient evidence to choose an ID for either occurrence.
+Historical `오송역2.3.4` occurs at sequences **27 and 28**. Current TAGO has two consecutive records at orders **28 and 29**, with distinct node IDs `DJB8007055` and `DJB9007055`, both marked direction `0`. The **Phase 2A preview** deliberately left both `AMBIGUOUS`; its local-neighbor matcher lacked enough adjacent evidence to choose an ID for either occurrence.
 
-Preview counts: `EXACT=0`, `SEQUENCE_MATCH=17`, `AMBIGUOUS=16`, `UNMATCHED=20`; `applied=0`. All 17 proposed verified mappings have TAGO coordinates, which would cover 17/53 historical B1 occurrences if later approved. The other 36 occurrences, especially the repeated turn-around and renamed stops, require review before any mapping is applied.
+Phase 2A preview counts: `EXACT=0`, `SEQUENCE_MATCH=17`, `AMBIGUOUS=16`, `UNMATCHED=20`; `applied=0`. All 17 proposed verified mappings have TAGO coordinates, which would cover 17/53 historical B1 occurrences if later approved.
 
 Reproduce the preview after loading the local historical Neo4j v2 graph:
 
@@ -31,3 +31,27 @@ Reproduce the preview after loading the local historical Neo4j v2 graph:
 ```
 
 `plan --tago-json` reads the fixture directly and does not import official nodes or write mapping edges. The historical graph and the routing service remain unchanged.
+
+## Phase 2B full-route alignment preview
+
+`b1_mapping_preview_phase2b.json` is the read-only preview after replacing the
+local-neighbor matcher with a full-route monotonic one-to-one alignment. Its
+SHA-256 is `f60ed222adacbe5838d4f2d66bcba5020578c90e4aaf026a7d3c6398f4feb721`.
+The older `b1_mapping_preview.json` is retained for comparison.
+
+| Status | Phase 2A | Phase 2B |
+|---|---:|---:|
+| EXACT | 0 | 0 |
+| SEQUENCE_MATCH | 17 | 41 |
+| AMBIGUOUS | 16 | 0 |
+| UNMATCHED | 20 | 12 |
+
+All 17 earlier proposed mappings remain. The 24 newly proposed mappings use
+the global order constraint; eight of the 41 accepted names differ only in
+presentation punctuation or spacing. Historical `오송역2.3.4` seq 27/28 map
+separately in the **preview** to official orders 28/29 and node IDs
+`DJB8007055`/`DJB9007055`. Official orders 11/46
+(`국제과학비즈니스벨트`) remain unused gaps. The 12 unmatched historical
+occurrences have changed labels that this deterministic name matcher does not
+equate. Proposed coordinate coverage is 41/53 historical occurrences. No
+official nodes or verified edges were applied to Neo4j.
