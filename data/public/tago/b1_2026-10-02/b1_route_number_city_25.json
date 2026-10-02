@@ -1,0 +1,1 @@
+{"response":{"header":{"resultCode":"00","resultMsg":"NORMAL SERVICE."},"body":{"items":{"item":{"endnodenm":"오송역2.3.4","endvehicletime":2340,"routeid":"DJB30300128","routeno":"B1","routetp":"광역버스","startnodenm":"대전역동광장","startvehicletime":"0530"}},"numOfRows":1000,"pageNo":1,"totalCount":1}}}

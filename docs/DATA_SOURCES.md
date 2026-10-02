@@ -37,6 +37,8 @@
 
 `import-national`과 TAGO의 `--import-to-neo4j` 옵션은 **로컬 Neo4j v2**에 공식 ID를 가진 별도 노드를 적재한다. 이름만으로 historical Stop/StopOccurrence에 병합하지 않는다. 따라서 공식 자료 적재만으로 B1 historical 경로의 좌표나 지도 선이 생기지는 않는다. 먼저 공식 ID와 historical occurrence의 대응을 검증해야 한다. 외부 키·다운로드 파일·적재 결과의 유무는 각 실행 환경에서 `public_data.py status`와 Neo4j 조회로 확인한다.
 
+Phase 2A의 선택적 occurrence 매핑은 [OFFICIAL_STOP_MAPPING.md](OFFICIAL_STOP_MAPPING.md)에 설명한다. 전국 정류장 CSV만으로는 노선별 정차 순서를 알 수 없어 안전한 매핑에 충분하지 않다. TAGO의 노선별 경유 정류소 순서와 검증된 노선 ID가 필요하며, 이미 받은 TAGO JSON 응답은 `public_data.py import-tago-json --path <file>`로 키 없이 적재할 수 있다.
+
 ## 현재 구현 경계
 
 - 저장소 포함: 세 historical CSV, 재현 가능한 v2 importer와 단위 테스트.

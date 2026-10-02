@@ -145,6 +145,16 @@ class TagoClientTests(unittest.TestCase):
             client.route_stops("25", "SYNTHETIC_ROUTE")
         self.assertNotIn(secret, str(caught.exception))
 
+    def test_local_tago_json_can_be_imported_without_an_api_key(self) -> None:
+        fixture = Path(__file__).parent / "fixtures" / "tago_route_stops.json"
+        output = io.StringIO()
+        with patch.object(public_data, "import_records", return_value=2) as imported:
+            with patch("sys.stdout", output):
+                exit_code = public_data.main(["import-tago-json", "--path", str(fixture)])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(json.loads(output.getvalue())["route_id"], "TEST_ROUTE_001")
+        self.assertEqual(len(imported.call_args.args[0]), 2)
+
 
 class OfficialUpsertTests(unittest.TestCase):
     def test_upsert_uses_mapping_vocabulary_and_never_name_matches(self) -> None:

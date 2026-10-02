@@ -334,8 +334,10 @@ def upsert_official_stop_batch(tx: Any, records: Iterable[OfficialStopRecord]) -
           MERGE (staging:RouteStopStaging {staging_id: r.staging_id})
           SET staging.official_route_id = r.official_route_id,
               staging.official_node_id = r.official_node_id,
+              staging.stop_name = r.name,
               staging.node_order = r.node_order,
               staging.direction_code = r.direction_code,
+              staging.city_code = r.city_code,
               staging.stop_number = r.stop_number,
               staging.source = r.source,
               staging.mapping_status = coalesce(staging.mapping_status, 'UNMATCHED'),
@@ -379,7 +381,10 @@ def extract_tago_items(payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
 
 
 def load_tago_fixture(path: str | Path) -> list[OfficialStopRecord]:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PublicDataResponseError("TAGO route-stop JSON could not be read.") from exc
     return normalize_tago_route_stops(extract_tago_items(payload))
 
 
@@ -519,6 +524,11 @@ def main(argv: list[str] | None = None) -> int:
     tago_parser.add_argument("--route-id", required=True)
     tago_parser.add_argument("--import-to-neo4j", action="store_true")
     tago_parser.add_argument("--batch-size", type=int, default=2_000)
+    tago_json_parser = subparsers.add_parser(
+        "import-tago-json", help="import a manually obtained TAGO route-stop JSON response"
+    )
+    tago_json_parser.add_argument("--path", required=True)
+    tago_json_parser.add_argument("--batch-size", type=int, default=2_000)
     args = parser.parse_args(argv)
 
     if args.command == "status":
@@ -537,13 +547,24 @@ def main(argv: list[str] | None = None) -> int:
                 result["imported"] = import_records(records, args.batch_size)
             _emit(result)
             return 0
-        records = TagoClient().route_stops(args.city_code, args.route_id)
-        imported = import_records(records, args.batch_size) if args.import_to_neo4j else 0
+        if args.command == "import-tago-json":
+            records = load_tago_fixture(args.path)
+            if not records:
+                raise PublicDataResponseError("TAGO route-stop JSON contains no usable records.")
+            route_ids = sorted({record.official_route_id for record in records})
+            if len(route_ids) != 1:
+                raise PublicDataResponseError("TAGO route-stop JSON must contain one official route ID.")
+            route_id = route_ids[0]
+            imported = import_records(records, args.batch_size)
+        else:
+            records = TagoClient().route_stops(args.city_code, args.route_id)
+            imported = import_records(records, args.batch_size) if args.import_to_neo4j else 0
+            route_id = args.route_id
         _emit(
             {
                 "status": "READY",
                 "source": TAGO_SOURCE,
-                "route_id": args.route_id,
+                "route_id": route_id,
                 "records": len(records),
                 "imported": imported,
             }
