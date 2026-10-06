@@ -97,6 +97,42 @@ class PredictionApiV2ContractTests(unittest.TestCase):
         self.assertIsNone(route["travel_time"])
         self.assertEqual(route["geometry_kind"], "UNAVAILABLE")
         self.assertEqual(route["geometry"], [])
+        self.assertEqual(payload["itineraries"], [])
+
+    def test_one_transfer_response_is_additive_and_validates_exactly_two_legs(self) -> None:
+        first, second = _v2_result()["routes"][0], _v2_result()["routes"][0].copy()
+        first.update({"line_name": "1000", "pattern_id": "p1", "hops": 2,
+                      "origin_occurrence_id": "origin-occ", "destination_occurrence_id": "transfer-a"})
+        second.update({"line_name": "1004", "pattern_id": "p2", "hops": 3,
+                       "origin_occurrence_id": "transfer-b", "destination_occurrence_id": "dest-occ"})
+        transfer_result = _v2_result()
+        transfer_result["routes"] = []
+        transfer_result["itineraries"] = [{
+            "transfer_count": 1,
+            "total_hops": 5,
+            "transfer": {
+                "official_stop_id": "SJB123", "official_stop_name": "공식 정류장",
+                "historical_name_leg1": "과거 표기 A", "historical_name_leg2": "과거 표기 B",
+                "leg1_occurrence_id": "o1", "leg2_occurrence_id": "o2",
+                "leg1_seq": 4, "leg2_seq": 8,
+                "mapping_leg1": {"mapping_status": "SEQUENCE_MATCH"},
+                "mapping_leg2": {"mapping_status": "EXACT"},
+            },
+            "legs": [first, second],
+        }]
+        fake_service = Mock()
+        fake_service.predict_boarding.return_value = transfer_result
+        with patch.object(app_module, "get_service", return_value=fake_service):
+            response = TestClient(app_module.app).post(
+                "/api/predict", json={"origin": "출발", "destination": "도착"}
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["routes"], [])
+        self.assertEqual(payload["itineraries"][0]["transfer_count"], 1)
+        self.assertEqual(len(payload["itineraries"][0]["legs"]), 2)
+        self.assertEqual(payload["itineraries"][0]["transfer"]["official_stop_id"], "SJB123")
 
     def test_optional_coordinates_are_forwarded_as_pairs(self) -> None:
         fake_service = Mock()

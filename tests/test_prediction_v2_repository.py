@@ -185,6 +185,81 @@ class DirectRouteTests(unittest.TestCase):
         self.assertIsNone(stops[2]["lat"])
 
 
+class OneTransferRouteTests(unittest.TestCase):
+    def candidate(self) -> dict[str, object]:
+        return {
+            "line1_id": "line-1", "line1_name": "1000", "pattern1_id": "pattern-1",
+            "pattern1_terminal": "start-end", "origin_stop_id": "origin",
+            "origin_stop_name": "과거 출발명", "origin_occurrence_id": "origin-occ",
+            "transfer1_occurrence_id": "transfer-a", "transfer1_name": "역사 이름 A",
+            "transfer1_seq": 2, "leg1_hops": 1,
+            "transfer1_mapping": {
+                "mapping_status": "SEQUENCE_MATCH", "mapping_method": "GLOBAL",
+                "official_node_id": "physical-1", "official_route_id": "route-1",
+                "created_at": object(),
+            },
+            "line2_id": "line-2", "line2_name": "1004", "pattern2_id": "pattern-2",
+            "pattern2_terminal": "start-end", "transfer2_occurrence_id": "transfer-b",
+            "transfer2_name": "역사 이름 B", "transfer2_seq": 8,
+            "destination_stop_id": "destination", "destination_stop_name": "과거 도착명",
+            "destination_occurrence_id": "destination-occ", "destination_seq": 9,
+            "leg2_hops": 1, "transfer_official_stop_id": "physical-1",
+            "transfer_official_stop_name": "공식 물리 정류장",
+            "transfer2_mapping": {
+                "mapping_status": "EXACT", "official_node_id": "physical-1",
+                "official_route_id": "route-2",
+            },
+        }
+
+    def test_verified_shared_stop_returns_two_ordered_legs_and_provenance(self) -> None:
+        candidate = self.candidate()
+        leg1_stops = [
+            {"occurrence_id": "origin-occ", "seq": 1, "stop_id": "origin", "stop_name": "과거 출발명", "lat": 36.1, "lon": 127.1},
+            {"occurrence_id": "transfer-a", "seq": 2, "stop_id": "transfer-a-stop", "stop_name": "역사 이름 A", "lat": 36.2, "lon": 127.2},
+        ]
+        leg2_stops = [
+            {"occurrence_id": "transfer-b", "seq": 8, "stop_id": "transfer-b-stop", "stop_name": "역사 이름 B", "lat": 36.2, "lon": 127.2},
+            {"occurrence_id": "destination-occ", "seq": 9, "stop_id": "destination", "stop_name": "과거 도착명", "lat": 36.3, "lon": 127.3},
+        ]
+        driver = FakeDriver([candidate], leg1_stops, leg2_stops)
+        repository = V2TransitRepository(driver)
+
+        itineraries = repository.find_one_transfer_routes("출발", "도착")
+
+        self.assertEqual(len(itineraries), 1)
+        itinerary = itineraries[0]
+        self.assertEqual(itinerary["transfer_count"], 1)
+        self.assertEqual(itinerary["total_hops"], 2)
+        self.assertEqual(itinerary["transfer"]["official_stop_id"], "physical-1")
+        self.assertEqual(itinerary["transfer"]["historical_name_leg1"], "역사 이름 A")
+        self.assertEqual(itinerary["transfer"]["historical_name_leg2"], "역사 이름 B")
+        self.assertEqual(len(itinerary["legs"]), 2)
+        self.assertEqual(itinerary["legs"][0]["stops"], leg1_stops)
+        self.assertNotIn("created_at", itinerary["transfer"]["mapping_leg1"])
+        query, parameters = driver.calls[0]
+        self.assertIn("NEXT*1..500", query)
+        self.assertIn("endNode(rel).seq = startNode(rel).seq + 1", query)
+        self.assertIn("pattern2.pattern_id <> pattern1.pattern_id", query)
+        self.assertIn("VERIFIED_OFFICIAL_STOP", query)
+        self.assertIn("mapping1.official_node_id = physical.official_node_id", query)
+        self.assertIn("mapping2.official_node_id = physical.official_node_id", query)
+        self.assertNotIn("<-[:NEXT", query)
+        self.assertEqual(parameters["origin_name"], "출발")
+
+    def test_missing_official_identity_returns_no_transfer(self) -> None:
+        driver = FakeDriver([])
+        repository = V2TransitRepository(driver)
+        self.assertEqual(repository.find_one_transfer_routes("같은 이름", "도착"), [])
+        query = driver.calls[0][0]
+        self.assertIn("VERIFIED_OFFICIAL_STOP", query)
+        self.assertIn("mapping2.official_node_id = physical.official_node_id", query)
+
+    def test_transfer_results_are_bounded(self) -> None:
+        repository = V2TransitRepository(FakeDriver())
+        with self.assertRaises(ValueError):
+            repository.find_one_transfer_routes("출발", "도착", limit=51)
+
+
 class RouteGeometryTests(unittest.TestCase):
     def test_geometry_is_unavailable_if_any_selected_stop_lacks_coordinates(self) -> None:
         stops = [

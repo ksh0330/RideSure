@@ -248,6 +248,101 @@ class BusPredictionService:
             "travel_time": None,
         }
 
+    def _build_transfer_leg(
+        self, leg: dict[str, Any], service_date: str, hour: int
+    ) -> dict[str, Any]:
+        stops = [self._normalize_stop(stop) for stop in leg.get("stops", [])]
+        if len(stops) < 2:
+            raise ValueError("Neo4j returned an incomplete transfer leg")
+        congestion = self.repository.resolve_congestion(
+            str(leg["pattern_id"]), str(leg["origin_occurrence_id"]), service_date, hour
+        )
+        geometry = self._geometry_from_stops(stops)
+        return {
+            "line_id": str(leg["line_id"]),
+            "line_name": str(leg["line_name"]),
+            "pattern_id": str(leg["pattern_id"]),
+            "terminal_description": leg.get("terminal_description"),
+            "origin_occurrence_id": str(leg["origin_occurrence_id"]),
+            "destination_occurrence_id": str(leg["destination_occurrence_id"]),
+            "origin_stop": stops[0],
+            "destination_stop": stops[-1],
+            "stops": stops,
+            "geometry": geometry,
+            "geometry_kind": "STOP_TO_STOP_APPROXIMATION" if geometry else "UNAVAILABLE",
+            "hops": int(leg["hops"]),
+            "onboard_count": congestion["onboard_count"],
+            "relative_percentile": congestion["relative_percentile"],
+            "congestion_level": congestion["congestion_level"],
+            "boarding_guidance": congestion["boarding_guidance"],
+            "evidence_source": congestion["source"],
+            "congestion_status": congestion["status"],
+            "service_date": congestion.get("service_date") or service_date,
+            "hour": congestion.get("hour", hour),
+            "sample_size": int(congestion.get("sample_size") or 0),
+            "boarding_probability": None,
+            "expected_load": None,
+            "travel_time": None,
+        }
+
+    def _transfer_candidates(
+        self,
+        origin_candidates: list[dict[str, Any]],
+        destination_candidates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
+        seen: set[tuple[str, ...]] = set()
+        for origin in origin_candidates[:8]:
+            for destination in destination_candidates[:8]:
+                origin_id = origin.get("stop_id") if origin.get("_selected") else None
+                destination_id = destination.get("stop_id") if destination.get("_selected") else None
+                if not origin_id and not destination_id and origin["name"] == destination["name"]:
+                    continue
+                matches = self.repository.find_one_transfer_routes(
+                    origin["name"], destination["name"], limit=20,
+                    origin_stop_id=origin_id, destination_stop_id=destination_id,
+                )
+                for itinerary in matches:
+                    legs = itinerary.get("legs") or []
+                    if len(legs) != 2 or itinerary.get("transfer_count") != 1:
+                        continue
+                    if legs[0].get("pattern_id") == legs[1].get("pattern_id"):
+                        continue
+                    if any(int(leg.get("hops") or 0) < 1 for leg in legs):
+                        continue
+                    transfer = itinerary.get("transfer") or {}
+                    physical_id = transfer.get("official_stop_id")
+                    first_mapping = transfer.get("mapping_leg1") or {}
+                    second_mapping = transfer.get("mapping_leg2") or {}
+                    if not physical_id or any(
+                        mapping.get("mapping_status") not in {"EXACT", "SEQUENCE_MATCH"}
+                        or mapping.get("official_node_id") != physical_id
+                        for mapping in (first_mapping, second_mapping)
+                    ):
+                        continue
+                    if int(itinerary.get("total_hops") or 0) != sum(int(leg["hops"]) for leg in legs):
+                        continue
+                    if origin_id and legs[0]["stops"][0].get("stop_id") != origin_id:
+                        continue
+                    if destination_id and legs[1]["stops"][-1].get("stop_id") != destination_id:
+                        continue
+                    identity = (
+                        legs[0]["pattern_id"], legs[0]["origin_occurrence_id"],
+                        physical_id,
+                        legs[1]["pattern_id"], legs[1]["destination_occurrence_id"],
+                    )
+                    if identity in seen:
+                        continue
+                    seen.add(identity)
+                    candidates.append(itinerary)
+        candidates.sort(key=lambda item: (
+            int(item["total_hops"]), int(item["legs"][0]["hops"]),
+            int(item["legs"][1]["hops"]), item["legs"][0]["line_name"],
+            item["legs"][1]["line_name"], item["legs"][0]["pattern_id"],
+            item["legs"][1]["pattern_id"], item["transfer"]["official_stop_id"],
+        ))
+        return candidates[:3]
+
     @staticmethod
     def _fallback_explanation(routes: list[dict[str, Any]]) -> str:
         if not routes:
@@ -271,6 +366,25 @@ class BusPredictionService:
         return (
             f"{route['line_name']} 직행 경로({origin} → {destination})를 안내합니다. "
             "선택한 날짜와 시간의 재차인원 근거가 없어 혼잡 안내는 데이터 부족입니다."
+        )
+
+    @staticmethod
+    def _transfer_fallback_explanation(itineraries: list[dict[str, Any]]) -> str:
+        if not itineraries:
+            return "현재 데이터에서 이용 가능한 경로를 찾지 못했습니다."
+        itinerary = itineraries[0]
+        first, second = itinerary["legs"]
+        transfer_name = itinerary["transfer"]["official_stop_name"]
+        def evidence(leg: dict[str, Any]) -> str:
+            if leg["onboard_count"] is None:
+                return "재차인원 데이터 부족"
+            return f"{leg['hour']:02d}시 재차인원 {leg['onboard_count']}명, {leg['boarding_guidance']}"
+        return (
+            f"직접 경로가 없어 1회 환승 경로를 안내합니다. {first['line_name']}을(를) 타고 "
+            f"{transfer_name}에서 {second['line_name']}(으)로 갈아타세요. "
+            f"각 구간의 과거 근거는 {first['line_name']} {evidence(first)}, "
+            f"{second['line_name']} {evidence(second)}입니다. 총 {itinerary['total_hops']}개 구간 연결이며 "
+            "이 안내는 이동 시간이나 혼잡 기준 최적 경로를 뜻하지 않습니다."
         )
 
     @staticmethod
@@ -366,23 +480,44 @@ class BusPredictionService:
             raise ValueError(f"도착지와 일치하는 정류장을 찾지 못했습니다: {destination}")
 
         direct = self._route_candidates(origin_candidates, destination_candidates)
-        if not direct:
-            raise ValueError("현재 Neo4j v2 데이터에서 이용 가능한 직접 노선을 찾지 못했습니다.")
-        routes = [
-            self._build_route_result(route, origin_stop, destination_stop, service_date, hour)
-            for route, origin_stop, destination_stop in direct
-        ]
-        explanation = self.predict_with_llm(routes, origin, destination)
+        if direct:
+            routes = [
+                self._build_route_result(route, origin_stop, destination_stop, service_date, hour)
+                for route, origin_stop, destination_stop in direct
+            ]
+            explanation = self.predict_with_llm(routes, origin, destination)
+            itineraries: list[dict[str, Any]] = []
+        else:
+            transfer_candidates = self._transfer_candidates(origin_candidates, destination_candidates)
+            if not transfer_candidates:
+                raise ValueError("현재 Neo4j v2 데이터에서 이용 가능한 직접 또는 1회 환승 경로를 찾지 못했습니다.")
+            itineraries = []
+            for candidate in transfer_candidates:
+                legs = [self._build_transfer_leg(leg, service_date, hour)
+                        for leg in candidate["legs"]]
+                itineraries.append({
+                    **candidate,
+                    "legs": legs,
+                })
+            routes = []
+            explanation = self._transfer_fallback_explanation(itineraries)
         alternatives = [
             f"{route['line_name']}: {route['origin_stop']['name']} → "
             f"{route['destination_stop']['name']}"
             for route in routes[1:]
         ]
+        if itineraries:
+            alternatives = [
+                f"{item['legs'][0]['line_name']} → {item['legs'][1]['line_name']} "
+                f"(환승: {item['transfer']['official_stop_name']})"
+                for item in itineraries[1:]
+            ]
         return {
             "success": True,
             "origin": origin,
             "destination": destination,
             "routes": routes,
+            "itineraries": itineraries,
             "reasoning": explanation,
             "explanation": explanation,
             "alternatives": alternatives,

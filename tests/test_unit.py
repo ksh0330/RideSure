@@ -294,10 +294,11 @@ class PredictionV2ServiceTests(unittest.TestCase):
         repository.find_direct_routes.return_value = [
             {"pattern_id": "wrong", "origin_stop_id": "other", "destination_stop_id": "destination"}
         ]
+        repository.find_one_transfer_routes.return_value = []
         service = BusPredictionService.__new__(BusPredictionService)
         service.repository = repository
 
-        with self.assertRaisesRegex(ValueError, "직접 노선"):
+        with self.assertRaisesRegex(ValueError, "직접 또는 1회 환승"):
             service.predict_boarding("동명", "도착", origin_stop_id="chosen")
 
         repository.find_direct_routes.assert_called_once_with(
@@ -323,6 +324,128 @@ class PredictionV2ServiceTests(unittest.TestCase):
         self.assertIn("B1", explanation)
         self.assertIn("17명", explanation)
         self.assertIn("탑승 확률을 뜻하지 않습니다", explanation)
+
+    def transfer_candidate(self, total_hops: int = 2, *, pattern_suffix: str = "a") -> dict:
+        first = {
+            "line_id": "line-1000", "line_name": "1000", "pattern_id": f"p1-{pattern_suffix}",
+            "origin_occurrence_id": "origin-occ", "destination_occurrence_id": "transfer-a",
+            "terminal_description": None, "hops": 1,
+            "stops": [
+                {"stop_id": "origin", "occurrence_id": "origin-occ", "seq": 1, "stop_name": "출발 과거명", "lat": None, "lon": None},
+                {"stop_id": "physical-a", "occurrence_id": "transfer-a", "seq": 2, "stop_name": "환승 과거명 A", "lat": 36.1, "lon": 127.1},
+            ],
+        }
+        second = {
+            "line_id": "line-1004", "line_name": "1004", "pattern_id": f"p2-{pattern_suffix}",
+            "origin_occurrence_id": "transfer-b", "destination_occurrence_id": "dest-occ",
+            "terminal_description": None, "hops": total_hops - 1,
+            "stops": [
+                {"stop_id": "physical-b", "occurrence_id": "transfer-b", "seq": 8, "stop_name": "환승 과거명 B", "lat": 36.1, "lon": 127.1},
+                {"stop_id": "destination", "occurrence_id": "dest-occ", "seq": 9, "stop_name": "도착 과거명", "lat": None, "lon": None},
+            ],
+        }
+        return {
+            "transfer_count": 1, "total_hops": total_hops,
+            "transfer": {
+                "official_stop_id": "official-1", "official_stop_name": "공식 환승 정류장",
+                "historical_name_leg1": "환승 과거명 A", "historical_name_leg2": "환승 과거명 B",
+                "leg1_occurrence_id": "transfer-a", "leg2_occurrence_id": "transfer-b",
+                "leg1_seq": 2, "leg2_seq": 8,
+                "mapping_leg1": {"mapping_status": "SEQUENCE_MATCH", "official_node_id": "official-1"},
+                "mapping_leg2": {"mapping_status": "EXACT", "official_node_id": "official-1"},
+            },
+            "legs": [first, second],
+        }
+
+    def test_direct_route_remains_preferred_over_transfer(self) -> None:
+        repository = Mock()
+        repository.find_stops_by_name.side_effect = [
+            [{"stop_id": "origin", "stop_name": "출발"}],
+            [{"stop_id": "destination", "stop_name": "도착"}],
+        ]
+        direct = v2_route()
+        direct.update(origin_occurrence_id="o-origin", destination_occurrence_id="o-destination")
+        repository.find_direct_routes.return_value = [direct]
+        repository.resolve_congestion.return_value = {
+            "source": "UNKNOWN", "status": "INSUFFICIENT_DATA", "onboard_count": None,
+            "relative_percentile": None, "congestion_level": "UNKNOWN",
+            "boarding_guidance": "데이터 부족", "sample_size": 0,
+        }
+        service = BusPredictionService.__new__(BusPredictionService)
+        service.repository = repository
+        service.predict_with_llm = Mock(return_value="direct explanation")
+
+        result = service.predict_boarding("출발", "도착")
+
+        self.assertEqual(len(result["routes"]), 1)
+        self.assertEqual(result["itineraries"], [])
+        repository.find_one_transfer_routes.assert_not_called()
+
+    def test_transfer_service_keeps_leg_congestion_separate_and_historical_names(self) -> None:
+        repository = Mock()
+        repository.find_stops_by_name.side_effect = [
+            [{"stop_id": "origin", "stop_name": "출발"}],
+            [{"stop_id": "destination", "stop_name": "도착"}],
+        ]
+        candidate = self.transfer_candidate()
+        repository.find_one_transfer_routes.return_value = [candidate]
+        repository.find_direct_routes.return_value = []
+        repository.resolve_congestion.side_effect = [
+            {"source": "HISTORICAL_OBSERVATION", "status": "AVAILABLE", "onboard_count": 21,
+             "relative_percentile": 60.0, "congestion_level": "MEDIUM", "boarding_guidance": "보통",
+             "service_date": "2025-11-08", "hour": 8, "sample_size": 34},
+            {"source": "HISTORICAL_PROFILE", "status": "FALLBACK", "onboard_count": 7,
+             "relative_percentile": 20.0, "congestion_level": "LOW", "boarding_guidance": "여유",
+             "hour": 8, "sample_size": 5},
+        ]
+        service = BusPredictionService.__new__(BusPredictionService)
+        service.repository = repository
+        service.predict_with_llm = Mock()
+
+        result = service.predict_boarding("출발", "도착", "08:00", "2025-11-08")
+        itinerary = result["itineraries"][0]
+
+        self.assertEqual(result["routes"], [])
+        self.assertEqual(itinerary["transfer_count"], 1)
+        self.assertEqual(len(itinerary["legs"]), 2)
+        self.assertEqual(itinerary["legs"][0]["onboard_count"], 21)
+        self.assertEqual(itinerary["legs"][1]["onboard_count"], 7)
+        self.assertEqual(itinerary["legs"][0]["evidence_source"], "HISTORICAL_OBSERVATION")
+        self.assertEqual(itinerary["legs"][1]["evidence_source"], "HISTORICAL_PROFILE")
+        self.assertEqual(itinerary["transfer"]["historical_name_leg1"], "환승 과거명 A")
+        self.assertEqual(itinerary["transfer"]["historical_name_leg2"], "환승 과거명 B")
+        self.assertIsNone(itinerary["legs"][0]["boarding_probability"])
+        service.predict_with_llm.assert_not_called()
+
+    def test_transfer_candidates_use_deterministic_hop_ranking(self) -> None:
+        repository = Mock()
+        repository.find_one_transfer_routes.return_value = [
+            self.transfer_candidate(5, pattern_suffix="long"),
+            self.transfer_candidate(3, pattern_suffix="short"),
+        ]
+        service = BusPredictionService.__new__(BusPredictionService)
+        service.repository = repository
+
+        ranked = service._transfer_candidates([{"name": "출발"}], [{"name": "도착"}])
+
+        self.assertEqual([route["total_hops"] for route in ranked], [3, 5])
+
+    def test_same_historical_name_without_verified_identity_is_rejected(self) -> None:
+        repository = Mock()
+        repository.find_stops_by_name.side_effect = [
+            [{"stop_id": "origin", "stop_name": "출발"}],
+            [{"stop_id": "destination", "stop_name": "도착"}],
+        ]
+        candidate = self.transfer_candidate()
+        candidate["transfer"]["historical_name_leg2"] = candidate["transfer"]["historical_name_leg1"]
+        candidate["transfer"]["mapping_leg2"] = {"mapping_status": "UNMATCHED", "official_node_id": "official-1"}
+        repository.find_one_transfer_routes.return_value = [candidate]
+        repository.find_direct_routes.return_value = []
+        service = BusPredictionService.__new__(BusPredictionService)
+        service.repository = repository
+
+        with self.assertRaisesRegex(ValueError, "직접 또는 1회 환승"):
+            service.predict_boarding("출발", "도착")
 
 
 class DataLoaderTests(unittest.TestCase):

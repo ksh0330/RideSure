@@ -270,6 +270,147 @@ class V2TransitRepository:
                 limit=limit,
             ).data()
 
+    def find_one_transfer_routes(
+        self,
+        origin_stop_name: str | None,
+        destination_stop_name: str | None,
+        limit: int = 10,
+        *,
+        origin_stop_id: str | None = None,
+        destination_stop_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Find two forward historical ride legs joined by one verified physical stop."""
+        limit = self._bounded_limit(limit)
+        if origin_stop_id is None and not origin_stop_name:
+            raise ValueError("origin_stop_name or origin_stop_id is required")
+        if destination_stop_id is None and not destination_stop_name:
+            raise ValueError("destination_stop_name or destination_stop_id is required")
+        query = """
+        MATCH (origin:Stop)<-[:AT_STOP]-(origin_occurrence:StopOccurrence)
+              <-[:HAS_OCCURRENCE]-(pattern1:RoutePattern)<-[:HAS_PATTERN]-(line1:Line)
+        WHERE (($origin_stop_id IS NOT NULL AND origin.stop_id = $origin_stop_id)
+               OR ($origin_stop_id IS NULL AND origin.name = $origin_name))
+        MATCH path1=(origin_occurrence)-[:NEXT*1..500]->(transfer1:StopOccurrence)
+        MATCH (pattern1)-[:HAS_OCCURRENCE]->(transfer1)
+        MATCH (transfer1)-[mapping1:VERIFIED_OFFICIAL_STOP]->(physical:Stop)
+        WHERE all(node IN nodes(path1) WHERE node.pattern_id = pattern1.pattern_id)
+          AND all(rel IN relationships(path1)
+                  WHERE endNode(rel).seq = startNode(rel).seq + 1)
+          AND mapping1.mapping_status IN ['EXACT', 'SEQUENCE_MATCH']
+          AND physical.id_kind = 'OFFICIAL_NODE_ID'
+          AND mapping1.official_node_id = physical.official_node_id
+        MATCH (physical)<-[mapping2:VERIFIED_OFFICIAL_STOP]-(transfer2:StopOccurrence)
+              <-[:HAS_OCCURRENCE]-(pattern2:RoutePattern)<-[:HAS_PATTERN]-(line2:Line)
+        WHERE pattern2.pattern_id <> pattern1.pattern_id
+          AND mapping2.mapping_status IN ['EXACT', 'SEQUENCE_MATCH']
+          AND mapping2.official_node_id = physical.official_node_id
+        MATCH path2=(transfer2)-[:NEXT*1..500]->(destination_occurrence:StopOccurrence)
+        MATCH (pattern2)-[:HAS_OCCURRENCE]->(destination_occurrence)
+        MATCH (destination_occurrence)-[:AT_STOP]->(destination:Stop)
+        WHERE (($destination_stop_id IS NOT NULL AND destination.stop_id = $destination_stop_id)
+               OR ($destination_stop_id IS NULL AND destination.name = $destination_name))
+          AND all(node IN nodes(path2) WHERE node.pattern_id = pattern2.pattern_id)
+          AND all(rel IN relationships(path2)
+                  WHERE endNode(rel).seq = startNode(rel).seq + 1)
+        RETURN DISTINCT
+               line1.line_id AS line1_id, line1.name AS line1_name,
+               pattern1.pattern_id AS pattern1_id,
+               pattern1.terminal_description AS pattern1_terminal,
+               origin.stop_id AS origin_stop_id, origin.name AS origin_stop_name,
+               origin_occurrence.occurrence_id AS origin_occurrence_id,
+               transfer1.occurrence_id AS transfer1_occurrence_id,
+               transfer1.raw_stop_name AS transfer1_name, transfer1.seq AS transfer1_seq,
+               length(path1) AS leg1_hops,
+               properties(mapping1) AS transfer1_mapping,
+               line2.line_id AS line2_id, line2.name AS line2_name,
+               pattern2.pattern_id AS pattern2_id,
+               pattern2.terminal_description AS pattern2_terminal,
+               transfer2.occurrence_id AS transfer2_occurrence_id,
+               transfer2.raw_stop_name AS transfer2_name, transfer2.seq AS transfer2_seq,
+               destination.stop_id AS destination_stop_id,
+               destination.name AS destination_stop_name,
+               destination_occurrence.occurrence_id AS destination_occurrence_id,
+               destination_occurrence.seq AS destination_seq,
+               length(path2) AS leg2_hops,
+               physical.official_node_id AS transfer_official_stop_id,
+               physical.name AS transfer_official_stop_name,
+               properties(mapping2) AS transfer2_mapping
+        ORDER BY leg1_hops + leg2_hops, leg1_hops, leg2_hops,
+                 line1_name, line2_name, pattern1_id, pattern2_id,
+                 origin_occurrence_id, transfer1_occurrence_id, transfer2_occurrence_id
+        LIMIT $limit
+        """
+        with self.driver.session() as session:
+            candidates = session.run(
+                query,
+                origin_name=origin_stop_name,
+                destination_name=destination_stop_name,
+                origin_stop_id=origin_stop_id,
+                destination_stop_id=destination_stop_id,
+                limit=limit,
+            ).data()
+
+        itineraries: list[dict[str, Any]] = []
+        for candidate in candidates:
+            leg1_geometry = self.get_route_geometry(
+                candidate["pattern1_id"], candidate["origin_occurrence_id"],
+                candidate["transfer1_occurrence_id"],
+            )
+            leg2_geometry = self.get_route_geometry(
+                candidate["pattern2_id"], candidate["transfer2_occurrence_id"],
+                candidate["destination_occurrence_id"],
+            )
+            itineraries.append({
+                "transfer_count": 1,
+                "total_hops": int(candidate["leg1_hops"]) + int(candidate["leg2_hops"]),
+                "transfer": {
+                    "official_stop_id": candidate["transfer_official_stop_id"],
+                    "official_stop_name": candidate["transfer_official_stop_name"],
+                    "historical_name_leg1": candidate["transfer1_name"],
+                    "historical_name_leg2": candidate["transfer2_name"],
+                    "leg1_occurrence_id": candidate["transfer1_occurrence_id"],
+                    "leg2_occurrence_id": candidate["transfer2_occurrence_id"],
+                    "leg1_seq": candidate["transfer1_seq"],
+                    "leg2_seq": candidate["transfer2_seq"],
+                    "mapping_leg1": self._mapping_provenance(candidate["transfer1_mapping"]),
+                    "mapping_leg2": self._mapping_provenance(candidate["transfer2_mapping"]),
+                },
+                "legs": [
+                    {
+                        "line_id": candidate["line1_id"],
+                        "line_name": candidate["line1_name"],
+                        "pattern_id": candidate["pattern1_id"],
+                        "terminal_description": candidate["pattern1_terminal"],
+                        "origin_occurrence_id": candidate["origin_occurrence_id"],
+                        "destination_occurrence_id": candidate["transfer1_occurrence_id"],
+                        "hops": candidate["leg1_hops"],
+                        **leg1_geometry,
+                    },
+                    {
+                        "line_id": candidate["line2_id"],
+                        "line_name": candidate["line2_name"],
+                        "pattern_id": candidate["pattern2_id"],
+                        "terminal_description": candidate["pattern2_terminal"],
+                        "origin_occurrence_id": candidate["transfer2_occurrence_id"],
+                        "destination_occurrence_id": candidate["destination_occurrence_id"],
+                        "hops": candidate["leg2_hops"],
+                        **leg2_geometry,
+                    },
+                ],
+            })
+        return itineraries
+
+    @staticmethod
+    def _mapping_provenance(properties: dict[str, Any]) -> dict[str, Any]:
+        """Return serializable verification evidence without Neo4j timestamps."""
+        allowed = (
+            "mapping_status", "mapping_method", "official_route_id",
+            "official_node_id", "route_binding_source", "name_match_kind",
+            "normalized_name", "node_order", "staging_id", "coordinate_source",
+            "official_source",
+        )
+        return {key: properties[key] for key in allowed if key in properties}
+
     def find_direct_routes_by_stop_ids(
         self,
         origin_stop_id: str,

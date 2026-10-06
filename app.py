@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="RideSure Neo4j v2 Demo",
     description=(
-        "Direct public-transit routes and relative congestion guidance from "
+        "Direct and one-transfer public-transit routes with per-leg relative congestion guidance from "
         "the RideSure Neo4j v2 historical knowledge graph."
     ),
     version="0.2-v2",
@@ -116,11 +116,38 @@ class RouteInfo(BaseModel):
     travel_time: Optional[int] = None
 
 
+class TransferLeg(RouteInfo):
+    hops: int = Field(ge=1)
+    origin_occurrence_id: str
+    destination_occurrence_id: str
+
+
+class TransferPoint(BaseModel):
+    official_stop_id: str
+    official_stop_name: str
+    historical_name_leg1: str
+    historical_name_leg2: str
+    leg1_occurrence_id: str
+    leg2_occurrence_id: str
+    leg1_seq: int
+    leg2_seq: int
+    mapping_leg1: dict
+    mapping_leg2: dict
+
+
+class OneTransferItinerary(BaseModel):
+    transfer_count: Literal[1]
+    total_hops: int = Field(ge=2)
+    transfer: TransferPoint
+    legs: List[TransferLeg] = Field(min_length=2, max_length=2)
+
+
 class PredictionResponse(BaseModel):
     success: bool
     origin: str
     destination: str
     routes: List[RouteInfo]
+    itineraries: List[OneTransferItinerary] = Field(default_factory=list)
     reasoning: str
     explanation: str
     alternatives: List[str] = Field(default_factory=list)
