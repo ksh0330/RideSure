@@ -17,14 +17,14 @@
 
 관련 공식 자료: [공공데이터포털의 국토교통부 노선별 재차인원 현황](https://www.data.go.kr/data/15071617/fileData.do)은 수집 방법을 교통카드빅데이터시스템(STCIS)으로 설명한다. [STCIS](https://www.stcis.go.kr/)는 관련 조회 시스템이다. 다만 저장소의 **세 CSV와 해당 포털 항목을 일대일로 연결하는 다운로드 기록·원문 URL은 저장소에 없다**. 따라서 포털 항목의 이용 조건을 이 세 파일의 확인된 재배포 조건으로 단정하지 않는다. 파일별 원 출처와 재배포 조건은 추가 확인 과제다.
 
-## 선택적 공식 참조 데이터
+## 공식 참조 데이터
 
-다음 데이터는 저장소에 포함되지 않는다. 실행 환경에 따라 `.env`의 파일 경로 또는 API 키로 설정하며, 기본 historical import에는 필요하지 않다.
+검증에 사용한 TAGO B1·1000·1001·1003·1004 응답 snapshot과 reviewed binding은 `data/public/tago/`에 포함된다. `python -m scripts.prepare_demo_data`는 이 파일만 사용하며 실시간 TAGO 호출이나 `DATA_GO_KR_SERVICE_KEY`가 필요 없다. 전국 정류장 CSV는 저장소에 포함되지 않는 선택적 입력이다.
 
 | 자료 | 코드에서 구현한 범위 | 사용자 측 준비 |
 |---|---|---|
 | [국토교통부 전국 버스정류장 위치정보](https://www.data.go.kr/data/15067528/fileData.do) | CSV 인코딩·열·좌표 검증, 공식 ID/좌표 Stop 적재 | CSV 수동 다운로드, `NATIONAL_BUS_STOP_CSV_DIR` |
-| [국토교통부 TAGO 버스노선정보](https://www.data.go.kr/data/15098529/openapi.do) | 노선별 경유 정류소 JSON 조회, 공식 Stop과 `RouteStopStaging` 적재 | `DATA_GO_KR_SERVICE_KEY`, 공식 city/route ID |
+| [국토교통부 TAGO 버스노선정보](https://www.data.go.kr/data/15098529/openapi.do) | 저장된 노선별 응답으로 공식 Stop·`RouteStopStaging`과 검증 mapping 적재; 선택적으로 새 API 응답 조회 | 표준 데모: 저장소 snapshot만 사용. 새 조회 시: `DATA_GO_KR_SERVICE_KEY`와 공식 city/route ID |
 
 전국 정류장 CSV adapter는 `NODE_ID`, `NODE_NM`, `GPS_LATI`, `GPS_LONG` 및 선택적 위치·도시 필드를 읽는다. 기본 경로는 저장소 기준 `data/public/national_bus_stops/*.csv`이며 해당 파일은 `.gitignore` 대상이다. TAGO adapter는 `routeid`, `nodeid`, `nodenm`, `nodeord`, `gpslati`, `gpslong` 등을 읽고, `updowncd`가 없으면 방향을 추측하지 않는다. `tests/fixtures/`의 TAGO 응답은 synthetic test fixture다.
 
@@ -35,15 +35,15 @@
 .\.venv\Scripts\python.exe .\public_data.py fetch-tago --city-code <official-city-code> --route-id <official-route-id>
 ```
 
-`import-national`과 TAGO의 `--import-to-neo4j` 옵션은 **로컬 Neo4j v2**에 공식 ID를 가진 별도 노드를 적재한다. 이름만으로 historical Stop/StopOccurrence에 병합하지 않는다. 따라서 공식 자료 적재만으로 B1 historical 경로의 좌표나 지도 선이 생기지는 않는다. 먼저 공식 ID와 historical occurrence의 대응을 검증해야 한다. 외부 키·다운로드 파일·적재 결과의 유무는 각 실행 환경에서 `public_data.py status`와 Neo4j 조회로 확인한다.
+`import-national`과 TAGO의 `--import-to-neo4j` 옵션은 **로컬 Neo4j v2**에 공식 ID를 가진 별도 노드를 적재한다. 이름만으로 historical Stop/StopOccurrence에 병합하지 않는다. 기본 데모의 저장된 TAGO 응답에는 별도 검토한 occurrence mapping이 적용된다. 외부 키·추가 다운로드 파일·적재 결과의 유무는 각 실행 환경에서 `public_data.py status`와 Neo4j 조회로 확인한다.
 
-Phase 2A의 선택적 occurrence 매핑은 [OFFICIAL_STOP_MAPPING.md](OFFICIAL_STOP_MAPPING.md)에 설명한다. 전국 정류장 CSV만으로는 노선별 정차 순서를 알 수 없어 안전한 매핑에 충분하지 않다. TAGO의 노선별 경유 정류소 순서와 검증된 노선 ID가 필요하며, 이미 받은 TAGO JSON 응답은 `public_data.py import-tago-json --path <file>`로 키 없이 적재할 수 있다.
+Occurrence 매핑 근거는 [OFFICIAL_STOP_MAPPING.md](OFFICIAL_STOP_MAPPING.md)에 설명한다. 전국 정류장 CSV만으로는 노선별 정차 순서를 알 수 없어 안전한 매핑에 충분하지 않다. TAGO의 노선별 경유 정류소 순서와 검증된 노선 ID가 필요하다.
 
 ## 현재 구현 경계
 
-- 저장소 포함: 세 historical CSV, 재현 가능한 v2 importer와 단위 테스트.
+- 저장소 포함: 세 historical CSV, 선택한 TAGO 응답 snapshot, 검증 mapping 기록, 재현 가능한 v2 importer와 단위 테스트.
 - 선택적 로컬 상태: Neo4j v1/v2 volume, EXAONE 모델 가중치, `.env`의 Kakao/API 키, 전국 정류장 CSV.
 - 구현된 fallback 조회: fresh realtime observation → exact historical observation → 이미 생성된 profile → `UNKNOWN`. 현재 저장소에는 realtime importer와 profile 생성 batch가 없다.
-- 미구현: 검증된 B1 공식 정류장 매핑, 공식 도로 route shape, 차량 정원/대기열 근거의 탑승 확률.
+- B1 occurrence mapping: 자동 41개와 별도 사람 검토 2개가 검증되었고 10개는 미해결이다. 차량 정원/대기열 근거의 탑승 확률은 구현하지 않는다. Kakao BUS 경로 선은 노선·양 끝 정류장·위치 검증을 통과할 때만 사용한다.
 
 설정 누락은 `public_data.py status`의 `NOT_CONFIGURED`로 표시된다. 이 값은 **실행한 컴퓨터의 상태**이며 저장소 기능의 영구 상태를 뜻하지 않는다.

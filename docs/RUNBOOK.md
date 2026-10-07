@@ -41,6 +41,8 @@ python -m scripts.prepare_demo_data
 
 This command uses the three shipped historical CSVs and reviewed TAGO snapshots. It imports history only into an empty v2 graph, accepts an already complete graph, checks reviewed mappings, and is safe to repeat. It refuses partial or inconsistent data for manual inspection. Expected output: 148 Lines, 154 RoutePatterns, 2,049 historical Stops, 11,375 StopOccurrences, 273,000 LoadObservations, 210 RouteStopStaging records, and 162 `VERIFIED_OFFICIAL_STOP` edges (160 automatic plus two separately reviewed B1 occurrences). It does not call TAGO or require a data.go.kr key.
 
+A clean-room test on Windows/Python 3.12/Neo4j 5.26 Community took about **2 minutes 10 seconds** on an empty volume and **34 seconds** on a second run. Times vary by machine. The first import prints little progress while writing 273,000 observations; let it finish rather than interrupting it with Ctrl+C. Both runs produced the same counts. `data_insert_v2.py verify` reported `complete` with zero incomplete batches, invalid coordinates, or orphan, provenance, and sequence errors.
+
 ## 6. Start RideSure
 
 ```sh
@@ -55,12 +57,13 @@ Choose stops from RideSure's stop suggestions; use date `2025-11-08` and time `0
 
 | Case | Input | Expected |
 |---|---|---|
-| Direct | 반석역 → 한국농어촌공사 | Historical line 1000 route and congestion evidence; map line only when both verified endpoint coordinates and validated Kakao BUS geometry are available. |
+| B1 direct | 대전역 → 세종시청.교육청.시의회 | Historical B1 route, two endpoint markers, and validated Kakao BUS road geometry when both Kakao keys are configured. |
+| 1000 direct | 두루초.중학교 → 조형아파트 | Historical line 1000 route and validated BUS road geometry when available. |
 | One transfer | 대평동(해들마을) → 첫마을3단지 | 1000 then 1004 via 세종고속시외버스터미널; each leg has its own evidence and validated line when available. |
-| Missing geometry | 대전역 → 세종시청.교육청.시의회 | B1 route and historical evidence remain; the unverified destination receives no `도착` marker and no fabricated line. |
+| Missing geometry | 대전역 → 소담동 | B1 historical route remains; the unresolved destination has no verified coordinates, so no destination marker or fabricated line appears. |
 | No supported route | Select two valid suggested stops for which no direct or verified one-transfer path is returned | Explicit no-supported-route state; no invented route or line. |
 
-The last case depends on the selected graph directions. Use `/api/predict` to confirm `result_status=NO_SUPPORTED_ROUTE` when choosing a pair; it is not an API error.
+The last case depends on the selected graph directions. Use `/api/predict` to confirm `result_status=NO_SUPPORTED_ROUTE` when choosing a pair; it is not an API error. The clean-room browser review also confirmed the B1, 1000, and 1000→1004 cases with actual Kakao BUS road-following geometry.
 
 ## 8. Automated tests
 

@@ -1,5 +1,9 @@
 # Historical occurrence → official stop mapping
 
+## Current portfolio state
+
+`python -m scripts.prepare_demo_data` imports the saved TAGO snapshots and reviewed bindings without an API key. It produces 210 `RouteStopStaging` records and 162 `VERIFIED_OFFICIAL_STOP` edges across the selected lines. For B1, 41/53 occurrences are matched by the conservative automatic alignment. Two directional `세종시청.교육청.시의회` occurrences were reviewed separately against the whole B1 order and adjacent stops; `data/public/tago/b1_2026-10-02/b1_reviewed_mappings.json` records their IDs, sequence context, and reasons with `HUMAN_REVIEWED_SEQUENCE` provenance. The remaining ten B1 occurrences have no verified coordinates. The workflow below describes the underlying mapping mechanism and optional manual data refresh.
+
 Phase 2A adds an optional mapping layer. The historical `Stop` nodes remain
 name-based and retain their IDs; `StopOccurrence`, `NEXT`, and congestion data
 are unchanged. TAGO route stops are imported as separate official `Stop` nodes

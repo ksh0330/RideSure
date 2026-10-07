@@ -1,311 +1,92 @@
 # RideSure
 
-> **B1 BRT의 노선·정류장·시간대별 차내 재차인원 데이터를 Knowledge Graph로 구조화해, 데이터 근거가 있는 혼잡 안내와 경로 추천을 제공하는 대중교통 프로토타입**
+**과거 버스 재차인원과 검증된 정류장 연결을 바탕으로 경로와 혼잡 근거를 함께 보여주는 대중교통 프로토타입**
 
-RideSure는 **2025 DSC 공유대학 KT 기업연계 오픈데이터 활용 스타트업 챌린지**에서 시작한 프로젝트입니다.  
-초기 대회 버전은 제한된 데이터와 구현 기간으로 인해 일부 경로·혼잡 안내가 단순화되어 있었고, 이후 포트폴리오 프로젝트로 재구성하면서 **Neo4j 데이터 모델과 ETL을 다시 설계하고 실제 관측 데이터에 근거한 경로 탐색·혼잡 안내 구조로 개선**했습니다.
+RideSure는 2025 DSC 공유대학 KT 기업연계 오픈데이터 활용 스타트업 챌린지에서 출발했다. 당시 문제는 B1 BRT 승객이 탑승 전 혼잡을 판단하거나 대안을 찾기 어렵다는 것이었다. 대회 MVP의 개념을 보존하면서, 이후 포트폴리오 재구성에서 데이터 식별자·그래프 구조·경로 검증·지도 표현을 다시 만들었다. 현재 버전은 **2025-11-08로 표시된 historical 차내 재차인원 스냅샷**을 사용하는 데모이며 실시간 교통 서비스가 아니다.
 
-재구성 버전에서는 노선·기종점별 `RoutePattern` 아래 순서가 있는 `StopOccurrence`를 `NEXT`로 연결해 반복 정류장을 보존합니다. 원본 CSV에 공식 방향 코드가 없어 `direction_status`는 `UNKNOWN`입니다. 저장소에 포함된 CSV **11,375행·273,000개 시간대 값**은 로컬 프로파일로 확인했습니다. 이 값은 원래 대회 버전의 성과 수치나 새 클론에 이미 적재된 Neo4j 개수가 아닙니다. 현재 추천 순서는 가까운 정류장 후보와 직행 경로의 hop 수에 기반하며, 혼잡 수준은 선택된 경로에 대한 **안내 근거**로 제공합니다.
+## 문제와 원래 MVP
 
----
+원래 MVP는 B1을 중심으로 Neo4j, 재차인원 기반 안내, 로컬 EXAONE 설명, 지도 화면을 결합한 서비스 프로토타입이었다. 제한된 공공데이터와 개발 기간 때문에 일부 경로·혼잡 결과는 단순화되어 있었다. 아래의 재현 가능한 ETL, occurrence 단위 경로, 공식 정류장 검증, 1회 환승, Kakao BUS geometry는 **대회 이후 포트폴리오 재구성 작업**이다.
 
-## Problem
+## 데이터와 Knowledge Graph 재설계
 
-B1 BRT는 대전·세종·오송을 연결하는 광역 교통수단이지만, 사용자는 탑승 전에 특정 시간대와 정류장에서의 혼잡 정도를 판단하기 어렵습니다.
+세 historical CSV의 원본 11,375행은 각 행에 24개 시간대 값을 갖는다. 이를 손실 없이 적재해 `LoadObservation` **273,000개**를 만들었다. 초기 v1 키를 다시 분석했을 때 collision key **83,688개**, conflicting key **33,650개**가 확인되어, 정류장 이름과 시간만으로 관측을 식별하는 방식은 안전하지 않았다. v2 observation ID는 원본 파일 hash·행·시간에서 만들고 출처 필드를 보존한다.
 
-기존 지도 서비스는 이동 경로와 도착 정보는 제공하지만, 프로젝트에서 확보한 데이터 기준으로는 다음 정보를 직접 활용하기 어려웠습니다.
-
-- 특정 시간대의 차내 재차인원
-- 혼잡 상황을 고려한 탑승 판단
-- 혼잡한 경우의 대안 경로
-- 데이터 근거를 설명하는 자연어 안내
-
-RideSure는 단순히 버스 노선을 보여주는 것이 아니라, **노선 구조와 과거 승객 관측 데이터를 함께 활용해 혼잡을 고려한 이동 판단을 지원하는 것**을 목표로 했습니다.
-
----
-
-## Solution
-
-사용자가 출발지, 도착지, 날짜와 시간을 입력하면 RideSure는 다음 순서로 결과를 생성합니다.
+정류장 이름은 방향, 순서, 반복 방문을 충분히 식별하지 못한다. 그래서 historical `Stop`과 특정 노선 패턴의 `StopOccurrence`를 분리하고, 이동 순서를 `NEXT`로 표현한다.
 
 ```text
-User Input
-    ↓
-FastAPI
-    ↓
-Neo4j Knowledge Graph
-    ↓
-Route Search + Congestion Logic
-    ↓
-EXAONE Local SLM
-    ↓
-Kakao Map + User Guidance
+(Line)-[:HAS_PATTERN]->(RoutePattern)
+(RoutePattern)-[:HAS_OCCURRENCE]->(StopOccurrence)
+(StopOccurrence)-[:AT_STOP]->(Stop)
+(StopOccurrence)-[:NEXT]->(StopOccurrence)
+(LoadObservation)-[:OBSERVED_AT]->(StopOccurrence)
+(LoadObservation)-[:ON_LINE]->(Line)
+(LoadObservation)-[:IMPORTED_IN]->(ImportBatch)
 ```
 
-1. Neo4j에서 방향성을 가진 직행 경로를 탐색합니다.
-2. 해당 RoutePattern과 StopOccurrence의 시간대별 차내 재차인원을 조회합니다.
-3. 관측값을 같은 RoutePattern·날짜·시간의 분포와 비교해 상대 혼잡 수준을 계산합니다.
-4. EXAONE은 이미 계산된 구조화 결과만 전달받아 짧은 자연어 안내를 생성합니다. 모델이 없거나 설명 검증에 실패하면 규칙 기반 문장을 사용합니다.
-5. Kakao Map에서 출발지·도착지와 사용 가능한 경로 정보를 시각화합니다.
+이 구조는 B1의 연속된 `오송역2.3.4` 두 occurrence도 서로 다른 순서·ID로 보존한다. 검증된 v2 historical graph는 `Line` **148**, `RoutePattern` **154**, historical `Stop` **2,049**, `StopOccurrence` **11,375**, `LoadObservation` **273,000**, `ImportBatch` **3**개다.
 
-**EXAONE이 노선이나 혼잡도를 계산하지 않습니다.**  
-경로와 혼잡 정보는 Neo4j 및 Python 로직에서 결정하고, SLM은 확정된 사실을 설명하는 역할만 담당합니다.
+## 공식 정류장 검증과 경로
 
----
+TAGO의 현재 정류장은 historical 이름 기반 `Stop`과 합치지 않는다. 노선 ID, 방향, 전체 순서, 앞뒤 정류장을 검토한 경우에만 historical occurrence에서 공식 `Stop`으로 `VERIFIED_OFFICIAL_STOP` 관계를 둔다. 해당 관계의 좌표만 지도와 경로 결과에 사용한다.
 
-## Key Engineering Challenges
+B1은 historical **53 occurrence**와 현재 TAGO **55 정류장**을 비교했다. 보수적인 자동 정렬은 **41개**를 검증했다. `세종시청.교육청.시의회`의 양방향 **2개**는 같은 기관명들의 표시 순서 차이와 방향·앞뒤 sequence를 사람 검토로 확인하고 `HUMAN_REVIEWED_SEQUENCE` 근거를 명시했다. 따라서 최종 **43/53**이 검증되었고, 근거가 부족한 **10개는 미해결 상태**로 남겼다. 현재 노선에만 있는 두 정류장에는 historical 관측을 만들지 않았다.
 
-### 1. 정류장 이름만으로는 실제 노선 순서를 표현하기 어려웠다
+RideSure는 historical `NEXT`를 따라 직행 경로를 조회한다. 직행이 없으면 서로 다른 `RoutePattern`의 occurrence가 **동일한 공식 물리 정류장**에 검증된 경우에만 1회 환승을 연결한다. 예: `대평동(해들마을) → 1000 → 세종고속시외버스터미널 → 1004 → 첫마을3단지`. 이름 유사도, 좌표 거리, 도보 연결로 환승을 추정하지 않는다.
 
-초기 그래프에서는 동일한 정류장명이 하나의 Stop으로 병합되면서 노선 방향과 반복 등장하는 정류장을 구분하기 어려웠습니다.
+## Kakao 지도와 EXAONE의 역할
 
-이를 해결하기 위해 그래프를 다음 구조로 재설계했습니다.
+**노선 선택은 RideSure/Neo4j가 수행한다.** Kakao 대중교통 응답은 선택한 구간의 BUS 노선명, 승하차 정류장명, 검증된 양 끝 좌표의 위치가 일치할 때만 경로 선으로 사용한다. 검증되지 않거나 좌표가 없는 구간에는 가짜 직선을 그리지 않는다. 사용자가 보는 출발·도착 표식도 실제 선택된 occurrence의 좌표가 있을 때만 놓는다.
 
 ```text
-Line
- └─ RoutePattern
-      └─ StopOccurrence
-           ├─ AT_STOP → Stop
-           └─ NEXT → StopOccurrence
+Neo4j 경로·관측 조회 → Python의 결정론적 혼잡 계산
+                    → 선택적 EXAONE 설명 또는 규칙 기반 설명
+                    → 검증된 Kakao BUS geometry 표시
 ```
 
-`StopOccurrence`를 별도로 두어 같은 이름의 정류장이 한 노선에서 여러 번 등장해도 각 occurrence와 순서를 독립적으로 보존했습니다.  
-또한 `NEXT` 관계를 통해 실제 방향성을 가진 경로 탐색이 가능하도록 구성했습니다.
+EXAONE은 **선택적 설명 계층**이다. 경로를 만들거나 혼잡 수치를 계산하지 않는다. 모델 서버가 없어도 구조화된 결과와 규칙 기반 안내가 동작한다.
 
-### 2. 기존 Observation Key에서 데이터 충돌 가능성이 있었다
+## 검증 결과
 
-초기 ETL은 노선·정류장·날짜·시간 중심의 key를 사용해 반복 occurrence나 중복 원본 행에서 관측값이 덮어써질 수 있었습니다.
+Windows, Python 3.12, Docker Desktop, Neo4j 5.26 Community에서 **fresh clone → 새 venv → 빈 Neo4j volume → 저장소의 CSV/TAGO snapshot만으로 재구축**을 확인했다. `python -m scripts.prepare_demo_data`는 첫 실행 약 **2분 10초**, 재실행 약 **34초**였다. 소요 시간은 컴퓨터 환경에 따라 달라진다. 두 실행 모두 historical graph 개수와 `RouteStopStaging` **210**, `VERIFIED_OFFICIAL_STOP` **162**를 유지했다.
 
-v2 ETL에서는 **원본 파일 hash + source row + hour**를 기반으로 안정적인 Observation ID를 생성했습니다.  
-이를 통해 각 시간대 관측값을 원본 위치까지 추적할 수 있도록 개선했습니다.
+`data_insert_v2.py verify`는 `complete` 상태와 incomplete batch·비정상 좌표·orphan·provenance·sequence 오류 **각 0건**을 확인했다. 자동 검증은 **112 pytest tests와 9 subtests**가 통과했다. 브라우저에서는 B1 `대전역 → 세종시청.교육청.시의회`, 1000 `두루초.중학교 → 조형아파트`, 1000→1004 1회 환승에서 실제 Kakao BUS 도로 경로 선을 확인했다.
 
-### 3. 실시간 데이터가 없어도 서비스가 동작해야 했다
+## 데이터 범위와 한계
 
-RideSure는 실시간 혼잡 API가 항상 존재한다는 것을 전제로 하지 않습니다.
+- `onboard_count`는 해당 날짜·시간의 **차내 재차인원**이다. 이를 탑승 성공 확률이나 차량 정원 대비 혼잡률로 바꾸지 않는다.
+- 임의 날짜의 혼잡 예측, 이동 시간 예측, 상용 수준의 최적 경로 추천은 제공하지 않는다. 현재 후보 순위는 정류장 후보와 hop 수 중심이다.
+- 실시간 관측 importer와 도보 환승·2회 이상 환승은 없다. 근거가 없으면 `UNKNOWN / 데이터 부족`으로 표시한다.
+- official mapping이 없는 historical occurrence는 좌표가 없다. B1에서도 10개가 미해결이다.
+- 저장소 CSV의 개별 원 출처와 재배포 조건을 공공데이터포털 항목에 일대일로 연결하는 기록은 없다. 확인 범위는 [데이터 출처](docs/DATA_SOURCES.md)에 명시했다.
 
-```text
-Realtime Observation
-        ↓
-Exact Historical Observation
-        ↓
-Historical Profile
-        ↓
-UNKNOWN
-```
+## 기술적 의의와 개선 방향
 
-실시간 값이 없으면 historical evidence를 사용하고, 근거가 없으면 임의의 결과를 생성하지 않고 `UNKNOWN / 데이터 부족` 상태를 반환합니다.
+이 재구성의 핵심은 정류장명만으로는 잃기 쉬운 **방향·방문 순서·반복·관측 출처**를 식별자로 되살리고, 불확실한 공식 정류장 대응과 지도 경로를 검증 경계 밖에 두는 것이다. 빈 DB에서도 같은 저장소 데이터로 그래프를 재구축하고 무결성을 확인할 수 있다. 후속 개선은 미해결 occurrence의 물리 정류장 근거, CSV의 원 출처·재배포 조건, 신뢰할 수 있는 실시간 관측 및 탑승 결과 근거가 확보될 때에만 검토한다.
 
-### 4. SLM이 교통 정보를 만들어내지 않도록 했다
+## Quick Start
 
-EXAONE에는 노선, 재차인원, 혼잡 수준 등 애플리케이션이 계산한 사실만 전달합니다.
-
-모델이 지원되지 않는 숫자나 탑승 확률 등을 생성할 경우 해당 결과를 사용하지 않고, 결정론적인 안내 문장으로 fallback하도록 구성했습니다.
-
----
-
-## Engineering Improvements
-
-| 초기 프로토타입 | 개선 버전 |
-|---|---|
-| 일부 고정된 데모 결과 | Neo4j 기반 실제 경로 조회 |
-| 정류장 중심 그래프 | `RoutePattern` + `StopOccurrence` 구조 |
-| 반복 정류장 구분 어려움 | occurrence 단위 독립 보존 |
-| Observation key 충돌 가능 | 원본 provenance 기반 ID |
-| 단순 혼잡 수치 | 차내 재차인원 + 상대 percentile |
-| 데이터가 없어도 결과 제공 가능 | `UNKNOWN / 데이터 부족` 반환 |
-| SLM 중심 설명 | 계산과 자연어 설명 계층 분리 |
-| 제한적인 정류장 정보 | 공공데이터 기반 공식 ID·좌표 연동 구조 추가 |
-
----
-
-## Results
-
-### 데이터 구조 개선
-
-저장소에 포함된 현재 historical 데이터의 로컬 CSV 프로파일:
-
-- 3개 CSV
-- **11,375개** 노선·정류장 행
-- 각 행의 24개 시간대 관측
-
-v2 ETL이 이 CSV에서 계산한 **예상 그래프 개수**:
-
-- **148 Lines**
-- **154 RoutePatterns**
-- **2,049 Stops**
-- **11,375 StopOccurrences**
-- **273,000 LoadObservations**
-
-v2 importer는 원본 파일 hash·행·시간을 각 Observation ID에 반영해 출처를 추적합니다. 위 개수는 `data_insert_v2.py profile`로 검증한 값이며, 새 클론의 Neo4j 적재 결과는 `data_insert_v2.py verify`로 별도 확인해야 합니다.
-
-### B1 경로 검증
-
-B1 CSV topology와 경로 조회 검증 코드는 다음 양방향 사례를 다룹니다. 실제 Neo4j v2 실행 검증은 로컬 적재 후 수행합니다.
-
-```text
-대전역 → 세종시청
-세종시청 → 대전역
-```
-
-방향에 따라 서로 다른 StopOccurrence sequence를 사용하며, `오송역2.3.4`처럼 동일 정류장이 연속해서 등장하는 경우도 각각 독립 occurrence로 보존합니다.
-
-또한 동일 정류장에서도 시간대가 달라지면 서로 다른 historical onboard count를 조회하도록 구현했습니다.
-
-### 데이터 기반 혼잡 안내
-
-`onboard_count`는 **차내 재차인원**으로 사용합니다.
-
-이를 차량 정원 대비 혼잡률이나 실제 탑승 성공 확률로 임의 변환하지 않고, 같은 RoutePattern과 시간대의 관측값과 비교해 상대 percentile과 혼잡 수준을 계산합니다.
-
----
-
-## Public Data
-
-### 차내 재차인원
-
-- 저장소 입력: `노선·정류장 지표(노선별 차내 재차인원)` CSV 3개
-- 관련 공식 자료: 국토교통부의 노선별 재차인원 현황, 공공데이터포털, 교통카드빅데이터시스템(STCIS)
-- 활용 항목: 노선, 기종점, 정류장 순번, 정류장명, 시간대별 차내 재차인원
-
-공식 포털 자료는 관련 데이터 계열을 설명하지만, 저장소의 세 CSV와 일대일로 연결하는 다운로드 기록은 없습니다. 파일별 원 출처와 재배포 조건은 [데이터 출처 문서](docs/DATA_SOURCES.md)에 확인 범위를 명시했습니다.
-
-관련 데이터:
-- [공공데이터포털 - 국토교통부 노선별 재차인원 현황](https://www.data.go.kr/data/15071617/fileData.do)
-- [교통카드빅데이터시스템(STCIS)](https://www.stcis.go.kr/)
-
-### 전국 버스정류장 위치정보
-
-국토교통부 전국 버스정류장 위치정보 CSV를 **별도로 다운로드한 경우** 공식 정류장 ID와 WGS84 좌표를 적재할 수 있도록 adapter를 구현했습니다. CSV는 저장소에 포함되지 않습니다.
-
-- [공공데이터포털 - 전국 버스정류장 위치정보](https://www.data.go.kr/data/15067528/fileData.do)
-
-### TAGO 버스노선정보
-
-TAGO 버스노선정보 API adapter는 키와 공식 route ID가 있을 때 정류장 ID·순서·선택적 방향·좌표를 조회하도록 구성했습니다. 실제 B1 공식 매핑은 검증되지 않았습니다.
-
-- [공공데이터포털 - TAGO 버스노선정보](https://www.data.go.kr/data/15098529/openapi.do)
-
-공식 데이터와 기존 historical 데이터는 **이름만으로 자동 병합하지 않고, 검증된 경우에만 연결**하는 것을 원칙으로 합니다.
-
----
-
-## My Role
-
-- 프로젝트 팀장
-- 문제 정의 및 서비스 기획
-- 노선·정류장·시간대 데이터의 관계 구조 정의
-- Neo4j Knowledge Graph 구조 설계 및 개선 방향 수립
-- 로컬 SLM 활용 구조 설계
-- 기능 검증 및 결과 비교
-- 팀 작업 조율 및 최종 발표
-
----
-
-## Tech Stack
-
-**Backend**  
-`Python` · `FastAPI` · `Pydantic`
-
-**Data / Graph**  
-`Neo4j` · `pandas` · `Public Data API`
-
-**AI**  
-`EXAONE 4.0 1.2B`
-
-**Frontend**  
-`JavaScript` · `Kakao Maps JavaScript SDK`
-
-**Infrastructure**  
-`Docker Compose` · `PowerShell`
-
----
-
-## Limitations
-
-현재 버전은 전국 단위 상용 대중교통 내비게이션이 아니라 **포트폴리오용 프로토타입**입니다.
-
-- Neo4j에서 탐색 가능한 직행 경로 중심이며 전체 환승 경로 탐색은 지원하지 않습니다.
-- 현재 후보 순위는 근접 정류장과 hop 수 기준입니다. 혼잡을 점수에 반영한 최적 경로 탐색은 구현되지 않았습니다.
-- 실시간 Observation을 사용할 수 있는 구조는 준비되어 있지만 production realtime importer는 구현 범위에 포함하지 않았습니다.
-- 차내 재차인원만으로 실제 탑승 성공 확률을 계산할 수 없기 때문에 `boarding_probability`를 임의 생성하지 않습니다.
-- 공식 road shape가 없는 경우 지도 경로는 정류장 좌표를 연결한 근사 경로만 사용할 수 있습니다.
-- 공공데이터와 historical 데이터의 정류장 매핑은 검증된 경우에만 적용합니다.
-- Historical CSV에 공식 정류장 ID가 없어 동명 정류장은 아직 확실하게 구분할 수 없습니다.
-
----
-
-## Run Locally
-
-### Clean-clone audit without external services
-
-Python 3.12만으로 저장소의 CSV와 단위 테스트를 먼저 확인할 수 있습니다. 이 과정에는 Docker, API 키, EXAONE 가중치가 필요하지 않습니다.
+Python 3.12와 Docker가 필요하다. `.env`에 로컬 Neo4j 비밀번호를 설정한다. Kakao JavaScript key는 지도, REST key는 검증된 대중교통 경로 선에 사용한다. 저장된 TAGO snapshot으로 데모를 준비할 때 `DATA_GO_KR_SERVICE_KEY`, EXAONE 모델, GPU는 필요하지 않다.
 
 ```powershell
+git clone https://github.com/ksh0330/RideSure.git
+cd RideSure
 py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements-audit.txt
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
-.\.venv\Scripts\python.exe .\data_insert_v2.py profile
+.\.venv\Scripts\python.exe -m pip install -r requirements-demo.txt
+Copy-Item .env.example .env  # NEO4J_PASS와 사용할 Kakao 키 설정
+docker compose --profile v2 up -d --wait neo4j-v2
+.\.venv\Scripts\python.exe -m scripts.prepare_demo_data
+.\.venv\Scripts\python.exe -m uvicorn app:app --host 127.0.0.1 --port 8000
 ```
 
-지도와 로컬 추론을 포함한 전체 실행에는 아래 설정이 추가로 필요합니다. `setup.ps1`은 v1/v2 Neo4j와 EXAONE까지 준비하므로 다운로드·GPU 요구량이 큽니다.
+브라우저 주소는 <http://127.0.0.1:8000/>이다. Kakao Developers에 **이 주소의 origin**을 등록해야 한다. 운영체제별 명령, 검증, 종료, 문제 해결은 [RUNBOOK](docs/RUNBOOK.md)에 있다.
 
-### Requirements
+## 프로젝트 기여와 문서
 
-- Python 3.12
-- Docker Desktop / Docker Compose
-- Windows PowerShell
-- Node.js
-- Kakao Maps JavaScript Key
-- NVIDIA CUDA 환경 (EXAONE GPU 추론 사용 시)
+대회 당시 역할은 팀장으로서 문제 정의, 서비스 기획, 그래프 구조 설계, 로컬 SLM 활용 방향, 검증 및 발표 조율이었다. 이 저장소는 그 MVP를 바탕으로 한 **후속 포트폴리오 재구성 결과**다.
 
-### Environment
-
-`.env.example`을 `.env`로 복사한 뒤 최소한 다음 값을 설정합니다.
-
-```dotenv
-NEO4J_PASS=<local Neo4j password>
-KAKAO_MAP_JAVASCRIPT_KEY=<Kakao JavaScript key>
-```
-
-실제 API Key와 비밀번호가 포함된 `.env`는 Git에 포함하지 않습니다.
-
-### Start
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\start.ps1
-```
-
-`setup.ps1`은 첫 실행에서 `.env.example`을 `.env`로 복사하고 중단합니다. 실제 값을 입력한 후 다시 실행하세요. 새 클론의 v2 Neo4j는 비어 있으며 setup이 세 CSV를 적재합니다. 모델을 이미 준비했다면 `-SkipModelDownload`, CPU 실행을 의도했다면 `-AllowCpu`를 사용할 수 있습니다.
-
-### Verify
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
-```
-
-### Stop
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\stop.ps1
-```
-
-### Local Services
-
-```text
-Demo UI        http://127.0.0.1:8000
-API Docs       http://127.0.0.1:8000/docs
-Health Check   http://127.0.0.1:8000/health
-Neo4j v2       http://127.0.0.1:7475
-```
-
----
-
-## Documentation
-
-세부 설계와 데이터 구조는 `docs/`에서 확인할 수 있습니다.
-
-- [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md) — 데이터 출처 및 활용 범위
-- [`docs/NEO4J_V2.md`](docs/NEO4J_V2.md) — Knowledge Graph 구조
-- [`docs/PREDICTION_DESIGN.md`](docs/PREDICTION_DESIGN.md) — 경로 및 혼잡 안내 설계
-- [`docs/PROJECT_GUIDE.md`](docs/PROJECT_GUIDE.md) — 실행 및 개발 가이드
+- [데이터 출처와 재현 범위](docs/DATA_SOURCES.md)
+- [Neo4j v2 구조](docs/NEO4J_V2.md)
+- [공식 정류장 mapping](docs/OFFICIAL_STOP_MAPPING.md)
+- [경로·혼잡 설계](docs/PREDICTION_DESIGN.md)
+- [실행 RUNBOOK](docs/RUNBOOK.md)

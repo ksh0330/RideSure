@@ -8,11 +8,11 @@
 origin/destination text + optional Kakao coordinates + date/time
   -> routeable stop candidates (nearby when mapped, name fallback otherwise)
   -> RoutePattern 안의 directed NEXT traversal
-  -> 최대 3개 direct pattern 후보
+  -> direct pattern 후보 또는 검증된 공식 정류장 기반 1회 환승
   -> fresh realtime / exact historical / LoadProfile / UNKNOWN
   -> structured route and congestion facts
   -> grounded EXAONE explanation or deterministic fallback
-  -> Kakao markers and optional stop-to-stop polyline
+  -> 선택된 occurrence의 지도 표식과 검증된 Kakao BUS path
 ```
 
 기본 ETL의 historical Stop에는 좌표가 없으므로 정류장명 검색 fallback을 사용한다. 좌표가 전달되어도 매핑된 routeable Stop이 없으면 좌표를 조작하지 않고 텍스트 후보를 찾는다.
@@ -24,7 +24,7 @@ origin/destination text + optional Kakao coordinates + date/time
 - 필수: `origin`, `destination`
 - 선택: `departure_time` (`HH:MM`, 기본 09시), `date` (`YYYY-MM-DD`, 기본 `TARGET_DATE`)
 - 선택: `origin_lat`/`origin_lon`, `destination_lat`/`destination_lon`
-- 선택: 검색 결과에서 고른 `origin_stop_id`, `destination_stop_id`
+- 선택: 검색 결과에서 고른 `origin_stop_id`, `destination_stop_id`; 검증된 공식 alias 선택 시 해당 `origin_occurrence_id`, `destination_occurrence_id`
 - 각 좌표 쌍은 함께 제공해야 하며 위도 `-90..90`, 경도 `-180..180`을 검증한다.
 
 `GET /api/stops/search?q=<정류장명>&limit=10`은 경로에 연결된 Stop만 최대 20개까지 반환한다. 부분 이름 검색을 허용하고 정확 일치, 접두 일치, 나머지 부분 일치 순으로 정렬한다. 응답에는 `stop_id`, 이름, 노선명, occurrence 수, 실제로 존재하는 좌표가 포함된다. 동명 Stop ID가 여러 개면 각각 별도 후보로 반환한다. UI에서 후보를 고르면 해당 ID를 `/api/predict`에 보내며, 입력 텍스트를 수정하면 선택을 해제한다.
@@ -43,7 +43,7 @@ origin/destination text + optional Kakao coordinates + date/time
 
 `boarding_probability`, `expected_load`, `travel_time`은 이전 계약 호환을 위한 deprecated nullable 필드다. 현재 근거로 계산할 수 없으므로 모두 `null`이며 임의 숫자를 채우지 않는다.
 
-직행 경로가 없거나 정류장을 찾지 못하면 서비스는 임의 경로 대신 명시적 400 오류를 반환한다. 프런트는 이 메시지를 표시한다.
+직행이 없으면 검증된 1회 환승을 조회한다. 두 방식 모두 불가능하면 `NO_SUPPORTED_ROUTE`를 반환하고 프런트는 중립적인 빈 결과를 표시한다. 존재하지 않는 정류장 ID 등 잘못된 요청은 오류로 처리한다.
 
 ## 직접 경로와 반복 정류장
 
@@ -62,7 +62,7 @@ origin StopOccurrence - NEXT* -> destination StopOccurrence
 
 B1 기준은 대전역 `seq=2` → 세종시청 `seq=13`의 11-hop, 반대 방향 세종시청 `seq=42` → 대전역 `seq=52` 경로다. `오송역2.3.4`의 `seq=27`, `seq=28`도 독립 occurrence로 남는다.
 
-현재 대안은 다른 direct RoutePattern 후보뿐이며 최대 3개 경로 중 첫 번째가 추천 경로다. 근접 정류장 후보와 hop 수로 정렬하며 혼잡 값을 경로 순위에 반영하지 않는다. 환승 탐색과 소요시간 계산은 구현하지 않았다.
+직행이 우선이며, 없을 때 두 historical pattern의 occurrence가 같은 `VERIFIED_OFFICIAL_STOP`에 연결된 경우만 1회 환승을 허용한다. 근접 정류장 후보와 hop 수로 정렬하며 혼잡 값을 경로 순위에 반영하지 않는다. 소요시간 계산, 도보 연결, 2회 이상 환승은 구현하지 않았다.
 
 ## 혼잡과 fallback
 
@@ -91,7 +91,7 @@ Realtime 조회와 stale 판정은 준비되어 있으나 importer가 없으므�
 
 ## 좌표와 지도
 
-Historical CSV에는 공식 stop ID와 좌표가 없다. 기본 ETL의 historical Stop은 `UNMAPPED_NAME_ONLY`이고 좌표가 없다. `public_data.py`가 official Stop과 `RouteStopStaging`을 적재할 수 있지만 검증된 historical 매핑을 자동 생성하지 않는다.
+Historical CSV에는 공식 stop ID와 좌표가 없다. Historical Stop에는 좌표를 복사하지 않는다. 저장소의 TAGO snapshot과 reviewed mapping으로 연결된 occurrence만 `VERIFIED_OFFICIAL_STOP`을 통해 공식 Stop 좌표를 얻는다. B1은 자동 41개, 사람 검토 2개, 미해결 10개다.
 
 선택한 경로의 모든 StopOccurrence가 실제 좌표를 가질 때만 API는 다음을 반환한다.
 
@@ -100,7 +100,7 @@ geometry_kind = STOP_TO_STOP_APPROXIMATION
 geometry = occurrence 순서의 lat/lon 목록
 ```
 
-하나라도 좌표가 없거나 좌표가 2개 미만이면 `geometry_kind=UNAVAILABLE`, `geometry=[]`다. stop-to-stop 선은 정류장 좌표를 직선으로 이은 근사이며 도로 shape나 실제 차량 궤적이 아니다. 현재 공식 route shape는 구현하지 않았다.
+하나라도 좌표가 없거나 좌표가 2개 미만이면 `geometry_kind=UNAVAILABLE`, `geometry=[]`다. 이 stop-to-stop 근사 좌표는 API 내부 정보이며 사용자 지도에 가짜 직선으로 그리지 않는다. 지도 선은 Kakao 응답의 BUS 노선명, 양 끝 정류장명과 검증 좌표 위치가 맞는 경우에만 `KAKAO_VERIFIED_BUS_PATH`로 사용한다.
 
 ## EXAONE 경계
 
@@ -116,8 +116,6 @@ LLM HTTP 오류, 빈 응답 또는 grounding 실패 시에도 route/congestion �
 
 ## 남은 범위
 
-1. 공식 B1 route/stop sequence를 확인하고 historical occurrence와 검증된 mapping을 생성한다.
-2. mapping된 좌표 커버리지를 확보해 지도 stop-to-stop approximation을 실제로 검증한다.
-3. 필요할 때 환승 탐색, 공식 route shape, 소요시간 근거를 추가한다.
-4. 실제 realtime source가 확보된 경우에만 importer와 freshness 운영 정책을 추가한다.
-5. 탑승 확률은 차량 정원·대기열·탑승 성공 ground truth가 확보되기 전까지 구현하지 않는다.
+- B1의 미해결 occurrence 10개는 추가 근거 없이 자동 연결하지 않는다.
+- 실제 realtime source가 확보된 경우에만 importer와 freshness 운영 정책을 검토한다.
+- 차량 정원·대기열·탑승 성공 ground truth가 없으므로 탑승 확률을 제공하지 않는다.

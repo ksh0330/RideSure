@@ -78,23 +78,23 @@ Historical source에 공식 방향값이 없어 `direction_status='UNKNOWN'`이�
 .\.venv\Scripts\python.exe .\public_data.py fetch-tago --city-code <official-city-code> --route-id <official-route-id> --import-to-neo4j
 ```
 
-공식 자료와 API 키는 저장소에 포함되지 않는다. 각 컴퓨터의 설정 여부는 `public_data.py status`로 확인한다. 제공된 ETL은 historical Stop에 좌표를 설정하거나 B1 공식 mapping을 만들지 않는다. Official Stop과 historical Stop/RoutePattern은 이름만으로 병합하지 않는다. `tests/fixtures/`는 실제 B1 응답이 아닌 synthetic schema fixture다.
+기본 데모에 필요한 TAGO 응답 snapshot은 저장소에 포함되고, API 키는 포함되지 않는다. `python -m scripts.prepare_demo_data`가 snapshot과 검토된 occurrence mapping을 재현한다. Historical Stop에 좌표를 복사하지 않고 `VERIFIED_OFFICIAL_STOP`을 통해 공식 Stop 좌표를 조회한다. 이름만으로 두 Stop을 병합하지 않는다. `tests/fixtures/`는 별도의 synthetic schema fixture다.
 
 ## API에서의 사용
 
 `prediction_v2.V2TransitRepository`가 다음을 제공한다.
 
 - routeable Stop name/nearby 후보와 Stop ID 선택 조회
-- occurrence ID를 보존하는 direct route와 ordered stops
+- occurrence ID를 보존하는 direct route, 검증된 같은 공식 정류장 기반 1회 환승, ordered stops
 - 모든 정류장에 실제 좌표가 있을 때만 stop-to-stop geometry
 - fresh realtime → exact historical → profile → unknown 혼잡 근거
 
-`service.py`는 최대 3개 direct pattern을 근접 후보·hop 수로 정렬해 첫 경로를 추천하고 나머지를 alternative로 반환한다. 현재 혼잡 수치는 ranking 점수에 들어가지 않는다. Historical 관측이 없으면 0을 만들지 않고 `UNKNOWN/데이터 부족`을 반환한다. `boarding_probability`는 nullable deprecated field이며 항상 `null`이다.
+`service.py`는 직행 후보를 근접 정류장·hop 수로 정렬하고, 직행이 없을 때 검증된 같은 공식 물리 정류장만 이용해 1회 환승을 조회한다. 혼잡 수치는 ranking 점수에 들어가지 않는다. Historical 관측이 없으면 0을 만들지 않고 `UNKNOWN/데이터 부족`을 반환한다. `boarding_probability`는 nullable deprecated field이며 항상 `null`이다.
 
 ## 제한
 
-- official B1 ID/sequence와 historical occurrence mapping 미완료
-- 기본 historical ETL에는 좌표 매핑이 없어 geometry `UNAVAILABLE`
-- official road/route shape와 환승 탐색 미구현
+- B1 53 occurrence 중 43개만 공식 정류장에 검증되었고 10개는 미해결이다.
+- 모든 정류장 좌표가 검증되어야 stop-to-stop approximation이 완전하다. 사용자 지도는 검증된 Kakao BUS path만 그리고 실패하면 선을 생략한다.
+- 도보 연결과 2회 이상 환승은 지원하지 않는다.
 - realtime importer 및 `LoadProfile` 생성 batch 미구현
 - 차량 정원·대기열·탑승 성공 label 부재
