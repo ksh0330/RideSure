@@ -313,6 +313,7 @@ class V2TransitRepository:
                  stop_id: stop.stop_id,
                  stop_name: stop.name,
                  official_stop_name: official.name,
+                 official_stop_id: official.official_node_id,
                  lat: official.lat,
                  lon: official.lon
              }) AS stops

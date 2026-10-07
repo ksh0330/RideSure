@@ -86,6 +86,8 @@ class StopInfo(BaseModel):
     stop_id: Optional[str] = None
     occurrence_id: Optional[str] = None
     name: str
+    official_stop_name: Optional[str] = None
+    official_stop_id: Optional[str] = None
     seq: Optional[int] = None
     lat: Optional[float] = Field(default=None, ge=-90, le=90)
     lon: Optional[float] = Field(default=None, ge=-180, le=180)
@@ -113,11 +115,22 @@ class RouteInfo(BaseModel):
     relative_percentile: Optional[float] = Field(default=None, ge=0, le=100)
     congestion_level: str
     boarding_guidance: str
+    boarding_likelihood: str = "UNKNOWN"
+    boarding_likelihood_label: str = "판단 불가"
+    boarding_likelihood_basis: str = "INSUFFICIENT_HISTORICAL_EVIDENCE"
+    boarding_decision: Optional[str] = None  # Compatibility alias.
+    boarding_decision_basis: Optional[str] = None
     evidence_source: str
     congestion_status: str
     service_date: Optional[str] = None
     hour: Optional[int] = Field(default=None, ge=0, le=23)
     sample_size: int = Field(default=0, ge=0)
+    estimated_duration_seconds: Optional[int] = Field(default=None, ge=1)
+    bus_duration_seconds: Optional[int] = Field(default=None, ge=1)
+    duration_kind: str = "UNAVAILABLE"
+    estimated_travel_time_seconds: Optional[int] = Field(default=None, ge=1)
+    estimated_travel_time_minutes: Optional[int] = Field(default=None, ge=1)
+    travel_time_source: str = "UNAVAILABLE"
     # Deprecated compatibility fields. They remain null instead of fabricating values.
     boarding_probability: Optional[float] = None
     expected_load: Optional[int] = None
@@ -148,6 +161,57 @@ class OneTransferItinerary(BaseModel):
     total_hops: int = Field(ge=2)
     transfer: TransferPoint
     legs: List[TransferLeg] = Field(min_length=2, max_length=2)
+    estimated_duration_seconds: Optional[int] = Field(default=None, ge=1)
+    bus_duration_sum_seconds: Optional[int] = Field(default=None, ge=1)
+    duration_kind: str = "UNAVAILABLE"
+    boarding_likelihood: str = "UNKNOWN"
+    boarding_likelihood_label: str = "판단 불가"
+    boarding_likelihood_basis: str = "INSUFFICIENT_HISTORICAL_EVIDENCE"
+    estimated_travel_time_seconds: Optional[int] = Field(default=None, ge=1)
+    estimated_travel_time_minutes: Optional[int] = Field(default=None, ge=1)
+    travel_time_source: str = "UNAVAILABLE"
+
+
+class RecommendedAlternative(BaseModel):
+    kind: Literal["DIRECT", "ONE_TRANSFER"]
+    index: int = Field(ge=0)
+    boarding_likelihood: str
+    boarding_likelihood_label: str
+
+
+class RouteOptionLeg(BaseModel):
+    line_name: str
+    origin_name: str
+    destination_name: str
+    stop_count: int = Field(ge=2)
+    onboard_count: Optional[int] = Field(default=None, ge=0)
+    congestion_level: str
+    congestion_label: str
+    boarding_likelihood_label: str
+    bus_duration_seconds: Optional[int] = Field(default=None, ge=1)
+
+
+class RouteOption(BaseModel):
+    option_type: Literal["DIRECT", "ONE_TRANSFER"]
+    source_index: int = Field(ge=0)
+    tag: Literal["CURRENT", "RECOMMENDED", "COMPARE"]
+    badges: List[str] = Field(default_factory=list)
+    title: str
+    legs: List[RouteOptionLeg] = Field(min_length=1, max_length=2)
+    boarding_likelihood: str
+    boarding_likelihood_label: str
+    boarding_likelihood_basis: str
+    congestion_level: str
+    congestion_label: str
+    onboard_count: Optional[int] = Field(default=None, ge=0)
+    estimated_travel_time_seconds: Optional[int] = Field(default=None, ge=1)
+    estimated_travel_time_minutes: Optional[int] = Field(default=None, ge=1)
+    travel_time_source: str = "UNAVAILABLE"
+    bus_travel_time_sum_seconds: Optional[int] = Field(default=None, ge=1)
+    bus_travel_time_sum_minutes: Optional[int] = Field(default=None, ge=1)
+    stop_count: int = Field(ge=2)
+    transfer_count: int = Field(ge=0, le=1)
+    recommendation_reason: Optional[str] = None
 
 
 class PredictionResponse(BaseModel):
@@ -160,6 +224,9 @@ class PredictionResponse(BaseModel):
     reasoning: str
     explanation: str
     alternatives: List[str] = Field(default_factory=list)
+    recommended_alternative: Optional[RecommendedAlternative] = None
+    recommendation_reason: Optional[str] = None
+    route_options: List[RouteOption] = Field(default_factory=list)
     data_mode: str = "NEO4J_V2_HISTORICAL"
 
 
@@ -192,6 +259,14 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 @app.get("/")
 async def root() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/brand/logo.png")
+async def brand_logo() -> FileResponse:
+    logo = STATIC_DIR / "assets" / "ridesure-logo.png"
+    if not logo.is_file():
+        raise HTTPException(status_code=404, detail="RideSure logo is not installed")
+    return FileResponse(logo, media_type="image/png")
 
 
 @app.get("/api/frontend-config", response_model=FrontendConfig)

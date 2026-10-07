@@ -99,6 +99,74 @@ class PredictionApiV2ContractTests(unittest.TestCase):
         self.assertEqual(route["geometry"], [])
         self.assertEqual(payload["itineraries"], [])
 
+    def test_verified_duration_and_likelihood_survive_predict_response_model(self) -> None:
+        result = _v2_result()
+        route = result["routes"][0]
+        route.update({
+            "boarding_likelihood": "MEDIUM",
+            "boarding_likelihood_label": "보통",
+            "boarding_likelihood_basis": "HISTORICAL_RELATIVE_CONGESTION",
+            "estimated_travel_time_seconds": 2533,
+            "estimated_travel_time_minutes": 42,
+            "travel_time_source": "KAKAO_VERIFIED_TRANSIT_ROUTE",
+        })
+        fake_service = Mock()
+        fake_service.predict_boarding.return_value = result
+        with patch.object(app_module, "get_service", return_value=fake_service):
+            response = self.client.post("/api/predict", json={"origin": "대전역", "destination": "세종시청"})
+        self.assertEqual(response.status_code, 200)
+        api_route = response.json()["routes"][0]
+        self.assertEqual(api_route["boarding_likelihood_label"], "보통")
+        self.assertEqual(api_route["estimated_travel_time_seconds"], 2533)
+        self.assertEqual(api_route["estimated_travel_time_minutes"], 42)
+        self.assertEqual(api_route["travel_time_source"], "KAKAO_VERIFIED_TRANSIT_ROUTE")
+        self.assertIsNone(api_route["boarding_probability"])
+
+    def test_recommendation_survives_predict_response_model(self) -> None:
+        result = _v2_result()
+        result["routes"][0]["boarding_likelihood"] = "LOW"
+        result["routes"][0]["boarding_likelihood_label"] = "낮음"
+        better = {**result["routes"][0], "line_name": "1000",
+                  "boarding_likelihood": "MEDIUM", "boarding_likelihood_label": "보통"}
+        result["routes"].append(better)
+        result["recommended_alternative"] = {
+            "kind": "DIRECT", "index": 1,
+            "boarding_likelihood": "MEDIUM", "boarding_likelihood_label": "보통",
+        }
+        result["recommendation_reason"] = "과거 재차인원 기반 탑승 여유가 높습니다."
+        option_leg = {
+            "line_name": "B1", "origin_name": "대전역", "destination_name": "세종시청",
+            "stop_count": 2, "onboard_count": 17, "congestion_level": "HIGH",
+            "congestion_label": "혼잡", "boarding_likelihood_label": "낮음",
+        }
+        result["route_options"] = [
+            {
+                "option_type": "DIRECT", "source_index": 0, "tag": "CURRENT",
+                "title": "B1", "legs": [option_leg], "boarding_likelihood": "LOW",
+                "boarding_likelihood_label": "낮음", "boarding_likelihood_basis": "HISTORICAL_RELATIVE_CONGESTION",
+                "congestion_level": "HIGH", "congestion_label": "혼잡", "onboard_count": 17,
+                "stop_count": 2, "transfer_count": 0,
+            },
+            {
+                "option_type": "DIRECT", "source_index": 1, "tag": "RECOMMENDED",
+                "title": "1000", "legs": [{**option_leg, "line_name": "1000"}],
+                "boarding_likelihood": "MEDIUM", "boarding_likelihood_label": "보통",
+                "boarding_likelihood_basis": "HISTORICAL_RELATIVE_CONGESTION",
+                "congestion_level": "MEDIUM", "congestion_label": "보통", "onboard_count": 7,
+                "stop_count": 2, "transfer_count": 0,
+                "recommendation_reason": result["recommendation_reason"],
+            },
+        ]
+        fake_service = Mock()
+        fake_service.predict_boarding.return_value = result
+        with patch.object(app_module, "get_service", return_value=fake_service):
+            response = self.client.post("/api/predict", json={"origin": "대전역", "destination": "세종시청"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["recommended_alternative"]["index"], 1)
+        self.assertIn("탑승 여유", response.json()["recommendation_reason"])
+        self.assertEqual([option["tag"] for option in response.json()["route_options"]],
+                         ["CURRENT", "RECOMMENDED"])
+
     def test_one_transfer_response_is_additive_and_validates_exactly_two_legs(self) -> None:
         first, second = _v2_result()["routes"][0], _v2_result()["routes"][0].copy()
         first.update({"line_name": "1000", "pattern_id": "p1", "hops": 2,

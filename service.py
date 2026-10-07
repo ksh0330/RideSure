@@ -18,6 +18,30 @@ from kakao_transit_geometry import KakaoTransitGeometry
 
 logger = logging.getLogger(__name__)
 
+BOARDING_LIKELIHOODS = {
+    "LOW": ("HIGH", "높음"),
+    "MEDIUM": ("MEDIUM", "보통"),
+    "HIGH": ("LOW", "낮음"),
+    "VERY_HIGH": ("VERY_LOW", "매우 낮음"),
+}
+LIKELIHOOD_RANK = {"VERY_LOW": 1, "LOW": 2, "MEDIUM": 3, "HIGH": 4}
+CONGESTION_LABELS = {
+    "LOW": "여유", "MEDIUM": "보통", "HIGH": "혼잡",
+    "VERY_HIGH": "매우 혼잡", "UNKNOWN": "정보 없음",
+}
+CONGESTION_RANK = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "VERY_HIGH": 4}
+
+
+def boarding_likelihood(level: str, source: str) -> tuple[str, str, str]:
+    if source in {"HISTORICAL_OBSERVATION", "HISTORICAL_PROFILE"} and level in BOARDING_LIKELIHOODS:
+        code, label = BOARDING_LIKELIHOODS[level]
+        return code, label, "HISTORICAL_RELATIVE_CONGESTION"
+    return "UNKNOWN", "판단 불가", "INSUFFICIENT_HISTORICAL_EVIDENCE"
+
+
+def _minutes(seconds: int | None) -> int | None:
+    return max(1, round(seconds / 60)) if seconds is not None and seconds > 0 else None
+
 
 def _present(value: Any) -> bool:
     return value is not None and value != ""
@@ -38,9 +62,17 @@ class BusPredictionService:
 
     def _enrich_map_geometry(self, leg: dict[str, Any]) -> None:
         client = getattr(self, "geometry_client", None)
-        points = client.for_leg(leg) if client is not None else []
+        has_structured_match = client is not None and hasattr(client, "for_leg_match")
+        match = client.for_leg_match(leg) if has_structured_match else None
+        points = match.points if match else (client.for_leg(leg) if client is not None and not has_structured_match else [])
         leg["map_geometry"] = points
         leg["map_geometry_source"] = "KAKAO_VERIFIED_BUS_PATH" if points else "UNAVAILABLE"
+        leg["bus_duration_seconds"] = match.bus_time_seconds if match else None
+        leg["estimated_duration_seconds"] = match.total_time_seconds if match else None
+        leg["duration_kind"] = "KAKAO_VERIFIED_ROUTE" if match and match.total_time_seconds else "UNAVAILABLE"
+        leg["estimated_travel_time_seconds"] = leg["estimated_duration_seconds"]
+        leg["estimated_travel_time_minutes"] = _minutes(leg["estimated_travel_time_seconds"])
+        leg["travel_time_source"] = "KAKAO_VERIFIED_TRANSIT_ROUTE" if leg["estimated_travel_time_seconds"] else "UNAVAILABLE"
 
     def close(self) -> None:
         self.driver.close()
@@ -145,6 +177,7 @@ class BusPredictionService:
             "occurrence_id": stop.get("occurrence_id"),
             "name": str(name),
             "official_stop_name": stop.get("official_stop_name"),
+            "official_stop_id": stop.get("official_stop_id"),
             "seq": stop.get("seq"),
             "lat": stop.get("lat"),
             "lon": stop.get("lon"),
@@ -256,6 +289,7 @@ class BusPredictionService:
             if _present(point.get("lat")) and _present(point.get("lon"))
         ]
         geometry_kind = "STOP_TO_STOP_APPROXIMATION" if geometry else "UNAVAILABLE"
+        likelihood, likelihood_label, likelihood_basis = boarding_likelihood(congestion["congestion_level"], congestion["source"])
         return {
             "line_id": str(route["line_id"]),
             "line_name": str(route["line_name"]),
@@ -270,6 +304,11 @@ class BusPredictionService:
             "relative_percentile": congestion["relative_percentile"],
             "congestion_level": congestion["congestion_level"],
             "boarding_guidance": congestion["boarding_guidance"],
+            "boarding_likelihood": likelihood,
+            "boarding_likelihood_label": likelihood_label,
+            "boarding_likelihood_basis": likelihood_basis,
+            "boarding_decision": likelihood_label,
+            "boarding_decision_basis": likelihood_basis,
             "evidence_source": congestion["source"],
             "congestion_status": congestion["status"],
             "service_date": congestion.get("service_date") or service_date,
@@ -290,6 +329,7 @@ class BusPredictionService:
             str(leg["pattern_id"]), str(leg["origin_occurrence_id"]), service_date, hour
         )
         geometry = self._geometry_from_stops(stops)
+        likelihood, likelihood_label, likelihood_basis = boarding_likelihood(congestion["congestion_level"], congestion["source"])
         return {
             "line_id": str(leg["line_id"]),
             "line_name": str(leg["line_name"]),
@@ -307,6 +347,11 @@ class BusPredictionService:
             "relative_percentile": congestion["relative_percentile"],
             "congestion_level": congestion["congestion_level"],
             "boarding_guidance": congestion["boarding_guidance"],
+            "boarding_likelihood": likelihood,
+            "boarding_likelihood_label": likelihood_label,
+            "boarding_likelihood_basis": likelihood_basis,
+            "boarding_decision": likelihood_label,
+            "boarding_decision_basis": likelihood_basis,
             "evidence_source": congestion["source"],
             "congestion_status": congestion["status"],
             "service_date": congestion.get("service_date") or service_date,
@@ -434,6 +479,153 @@ class BusPredictionService:
         )
 
     @staticmethod
+    def _itinerary_likelihood(legs: list[dict[str, Any]]) -> tuple[str, str, str]:
+        if any(leg["boarding_likelihood"] == "UNKNOWN" for leg in legs):
+            return "UNKNOWN", "판단 불가", "INSUFFICIENT_HISTORICAL_EVIDENCE"
+        worst = min(legs, key=lambda leg: LIKELIHOOD_RANK[leg["boarding_likelihood"]])
+        return (worst["boarding_likelihood"], worst["boarding_likelihood_label"],
+                "HISTORICAL_RELATIVE_CONGESTION")
+
+    @staticmethod
+    def _recommended_alternative(
+        routes: list[dict[str, Any]], itineraries: list[dict[str, Any]]
+    ) -> dict[str, Any] | None:
+        if not routes or routes[0]["boarding_likelihood"] not in {"LOW", "VERY_LOW"}:
+            return None
+        current_rank = LIKELIHOOD_RANK[routes[0]["boarding_likelihood"]]
+        candidates = []
+        for index, route in enumerate(routes[1:], 1):
+            rank = LIKELIHOOD_RANK.get(route["boarding_likelihood"], 0)
+            if rank > current_rank:
+                candidates.append((rank, 1, -len(route.get("stops") or []), -index, "DIRECT", index, route))
+        for index, itinerary in enumerate(itineraries):
+            rank = LIKELIHOOD_RANK.get(itinerary["boarding_likelihood"], 0)
+            if rank > current_rank:
+                candidates.append((rank, 0, -(int(itinerary.get("total_hops") or 0) + 1),
+                                   -index, "ONE_TRANSFER", index, itinerary))
+        if not candidates:
+            return None
+        _, _, _, _, kind, index, chosen = max(candidates)
+        return {
+            "kind": kind,
+            "index": index,
+            "boarding_likelihood": chosen["boarding_likelihood"],
+            "boarding_likelihood_label": chosen["boarding_likelihood_label"],
+        }
+
+    def _enrich_itinerary(self, itinerary: dict[str, Any]) -> None:
+        for leg in itinerary["legs"]:
+            self._enrich_map_geometry(leg)
+        client = getattr(self, "geometry_client", None)
+        duration = (client.for_transfer_time(itinerary["legs"], itinerary["transfer"])
+                    if client is not None and hasattr(client, "for_transfer_time") else None)
+        itinerary["estimated_duration_seconds"] = duration
+        itinerary["duration_kind"] = "KAKAO_VERIFIED_ROUTE" if duration else "UNAVAILABLE"
+        itinerary["estimated_travel_time_seconds"] = duration
+        itinerary["estimated_travel_time_minutes"] = _minutes(duration)
+        itinerary["travel_time_source"] = "KAKAO_VERIFIED_TRANSIT_ROUTE" if duration else "UNAVAILABLE"
+        bus_times = [leg.get("bus_duration_seconds") for leg in itinerary["legs"]]
+        itinerary["bus_duration_sum_seconds"] = sum(bus_times) if all(bus_times) else None
+
+    @staticmethod
+    def _option_refs(
+        routes: list[dict[str, Any]], itineraries: list[dict[str, Any]],
+        recommendation: dict[str, Any] | None,
+    ) -> list[tuple[str, int]]:
+        primary = ("DIRECT", 0) if routes else ("ONE_TRANSFER", 0)
+        refs = [primary]
+        if recommendation:
+            refs.append((recommendation["kind"], recommendation["index"]))
+        others = [("DIRECT", index) for index in range(len(routes))]
+        others += [("ONE_TRANSFER", index) for index in range(len(itineraries))]
+
+        def rank(ref: tuple[str, int]) -> tuple[int, int, int, int]:
+            kind, index = ref
+            item = routes[index] if kind == "DIRECT" else itineraries[index]
+            stop_count = (len(item["stops"]) if kind == "DIRECT"
+                          else int(item["total_hops"]) + 1)
+            return (LIKELIHOOD_RANK.get(item["boarding_likelihood"], 0),
+                    1 if kind == "DIRECT" else 0, -stop_count, -index)
+
+        for ref in sorted(others, key=rank, reverse=True):
+            if ref not in refs:
+                refs.append(ref)
+            if len(refs) == 3:
+                break
+        return refs
+
+    @staticmethod
+    def _route_option(kind: str, index: int, item: dict[str, Any],
+                      tag: str, reason: str | None) -> dict[str, Any]:
+        legs = [item] if kind == "DIRECT" else item["legs"]
+        congestion_level = (item["congestion_level"] if kind == "DIRECT" else
+                            max((leg["congestion_level"] for leg in legs),
+                                key=lambda level: CONGESTION_RANK.get(level, 99)))
+        leg_details = [{
+            "line_name": leg["line_name"],
+            "origin_name": leg["origin_stop"]["name"],
+            "destination_name": leg["destination_stop"]["name"],
+            "stop_count": len(leg["stops"]),
+            "onboard_count": leg["onboard_count"],
+            "congestion_level": leg["congestion_level"],
+            "congestion_label": CONGESTION_LABELS.get(leg["congestion_level"], "정보 없음"),
+            "boarding_likelihood_label": leg["boarding_likelihood_label"],
+            "bus_duration_seconds": leg.get("bus_duration_seconds"),
+        } for leg in legs]
+        full_seconds = item.get("estimated_travel_time_seconds")
+        bus_sum = item.get("bus_duration_sum_seconds") if kind == "ONE_TRANSFER" else None
+        return {
+            "option_type": kind,
+            "source_index": index,
+            "tag": tag,
+            "badges": [],
+            "title": " → ".join(leg["line_name"] for leg in legs),
+            "legs": leg_details,
+            "boarding_likelihood": item["boarding_likelihood"],
+            "boarding_likelihood_label": item["boarding_likelihood_label"],
+            "boarding_likelihood_basis": item["boarding_likelihood_basis"],
+            "congestion_level": congestion_level,
+            "congestion_label": CONGESTION_LABELS.get(congestion_level, "정보 없음"),
+            "onboard_count": item["onboard_count"] if kind == "DIRECT" else None,
+            "estimated_travel_time_seconds": full_seconds,
+            "estimated_travel_time_minutes": _minutes(full_seconds),
+            "travel_time_source": item.get("travel_time_source", "UNAVAILABLE"),
+            "bus_travel_time_sum_seconds": bus_sum,
+            "bus_travel_time_sum_minutes": _minutes(bus_sum),
+            "stop_count": len(item["stops"]) if kind == "DIRECT" else int(item["total_hops"]) + 1,
+            "transfer_count": 0 if kind == "DIRECT" else 1,
+            "recommendation_reason": reason,
+        }
+
+    @staticmethod
+    def _meaningful_comparison(primary: dict[str, Any], other: dict[str, Any]) -> bool:
+        primary_rank = LIKELIHOOD_RANK.get(primary["boarding_likelihood"], 0)
+        other_rank = LIKELIHOOD_RANK.get(other["boarding_likelihood"], 0)
+        if other_rank > primary_rank:
+            return True
+        if other_rank < primary_rank or other_rank == 0:
+            return False
+        if other["transfer_count"] < primary["transfer_count"]:
+            return True
+        if other["stop_count"] < primary["stop_count"]:
+            return True
+        current_time, other_time = (primary["estimated_travel_time_seconds"],
+                                    other["estimated_travel_time_seconds"])
+        return bool(current_time and other_time and other_time < current_time)
+
+    @staticmethod
+    def _tag_comparable_minima(options: list[dict[str, Any]]) -> None:
+        if len(options) < 2:
+            return
+        min_transfers = min(option["transfer_count"] for option in options)
+        if sum(option["transfer_count"] == min_transfers for option in options) == 1:
+            next(option for option in options if option["transfer_count"] == min_transfers)["badges"].append("최소 환승")
+        if all(option["estimated_travel_time_seconds"] for option in options):
+            shortest = min(option["estimated_travel_time_seconds"] for option in options)
+            if sum(option["estimated_travel_time_seconds"] == shortest for option in options) == 1:
+                next(option for option in options if option["estimated_travel_time_seconds"] == shortest)["badges"].append("최소시간")
+
+    @staticmethod
     def _llm_output_is_grounded(text: str, facts: dict[str, Any]) -> bool:
         if not text or len(text) > 500 or "%" in text or "탑승 확률" in text:
             return False
@@ -531,47 +723,90 @@ class BusPredictionService:
             raise ValueError(f"도착지와 일치하는 정류장을 찾지 못했습니다: {destination}")
 
         direct = self._route_candidates(origin_candidates, destination_candidates)
-        if direct:
-            routes = [
-                self._build_route_result(route, origin_stop, destination_stop, service_date, hour)
-                for route, origin_stop, destination_stop in direct
-            ]
+        routes = [
+            self._build_route_result(route, origin_stop, destination_stop, service_date, hour)
+            for route, origin_stop, destination_stop in direct
+        ]
+        transfer_candidates = self._transfer_candidates(origin_candidates, destination_candidates)
+        itineraries = []
+        for candidate in transfer_candidates:
+            legs = [self._build_transfer_leg(leg, service_date, hour) for leg in candidate["legs"]]
+            likelihood, label, basis = self._itinerary_likelihood(legs)
+            itineraries.append({**candidate, "legs": legs,
+                                "boarding_likelihood": likelihood,
+                                "boarding_likelihood_label": label,
+                                "boarding_likelihood_basis": basis})
+        if not routes and not itineraries:
+            return {
+                "success": True,
+                "result_status": "NO_SUPPORTED_ROUTE",
+                "origin": origin,
+                "destination": destination,
+                "routes": [],
+                "itineraries": [],
+                "reasoning": "현재 데이터 범위에서 경로를 찾지 못했습니다.",
+                "explanation": "현재 데이터 범위에서 경로를 찾지 못했습니다.",
+                "alternatives": [],
+                "recommended_alternative": None,
+                "recommendation_reason": None,
+                "route_options": [],
+                "data_mode": "NEO4J_V2_HISTORICAL",
+            }
+        recommendation = self._recommended_alternative(routes, itineraries)
+        refs = self._option_refs(routes, itineraries, recommendation)
+        if routes:
             explanation = self.predict_with_llm(routes, origin, destination)
-            self._enrich_map_geometry(routes[0])
-            itineraries: list[dict[str, Any]] = []
         else:
-            transfer_candidates = self._transfer_candidates(origin_candidates, destination_candidates)
-            if not transfer_candidates:
-                return {
-                    "success": True,
-                    "result_status": "NO_SUPPORTED_ROUTE",
-                    "origin": origin,
-                    "destination": destination,
-                    "routes": [],
-                    "itineraries": [],
-                    "reasoning": "현재 데이터 범위에서 경로를 찾지 못했습니다.",
-                    "explanation": "현재 데이터 범위에서 경로를 찾지 못했습니다.",
-                    "alternatives": [],
-                    "data_mode": "NEO4J_V2_HISTORICAL",
-                }
-            itineraries = []
-            for candidate in transfer_candidates:
-                legs = [self._build_transfer_leg(leg, service_date, hour)
-                        for leg in candidate["legs"]]
-                itineraries.append({
-                    **candidate,
-                    "legs": legs,
-                })
-            routes = []
             explanation = self._transfer_fallback_explanation(itineraries)
-            for leg in itineraries[0]["legs"]:
-                self._enrich_map_geometry(leg)
+        for kind, index in refs:
+            if kind == "DIRECT":
+                self._enrich_map_geometry(routes[index])
+            else:
+                self._enrich_itinerary(itineraries[index])
+        options = [self._route_option(kind, index,
+                                     routes[index] if kind == "DIRECT" else itineraries[index],
+                                     "CURRENT" if position == 0 else "COMPARE", None)
+                   for position, (kind, index) in enumerate(refs)]
+        # A same-likelihood alternative can only claim a time advantage when
+        # both complete itineraries have independently verified Kakao times.
+        if not recommendation and routes and routes[0]["boarding_likelihood"] in {"LOW", "VERY_LOW"}:
+            current = options[0]
+            faster = [option for option in options[1:]
+                      if option["boarding_likelihood"] == current["boarding_likelihood"]
+                      and current["estimated_travel_time_seconds"]
+                      and option["estimated_travel_time_seconds"]
+                      and option["estimated_travel_time_seconds"] <= current["estimated_travel_time_seconds"] - 60]
+            if faster:
+                chosen = min(faster, key=lambda option: (option["estimated_travel_time_seconds"],
+                                                         option["transfer_count"], option["stop_count"]))
+                recommendation = {"kind": chosen["option_type"], "index": chosen["source_index"],
+                                  "boarding_likelihood": chosen["boarding_likelihood"],
+                                  "boarding_likelihood_label": chosen["boarding_likelihood_label"]}
+        recommendation_reason = None
+        if recommendation:
+            current = options[0]
+            chosen = next(option for option in options
+                          if option["option_type"] == recommendation["kind"]
+                          and option["source_index"] == recommendation["index"])
+            steps = (LIKELIHOOD_RANK.get(chosen["boarding_likelihood"], 0)
+                     - LIKELIHOOD_RANK.get(current["boarding_likelihood"], 0))
+            if steps > 0:
+                recommendation_reason = f"현재 경로보다 과거 상대 혼잡 기준 탑승 가능성이 {steps}단계 높습니다."
+            else:
+                saved = _minutes(current["estimated_travel_time_seconds"] - chosen["estimated_travel_time_seconds"])
+                recommendation_reason = f"검증된 예상 소요시간이 현재 경로보다 약 {saved}분 짧습니다."
+            chosen["tag"] = "RECOMMENDED"
+            chosen["recommendation_reason"] = recommendation_reason
+        options = [option for position, option in enumerate(options)
+                   if position == 0 or option["tag"] == "RECOMMENDED"
+                   or self._meaningful_comparison(options[0], option)]
+        self._tag_comparable_minima(options)
         alternatives = [
             f"{route['line_name']}: {route['origin_stop']['name']} → "
             f"{route['destination_stop']['name']}"
             for route in routes[1:]
         ]
-        if itineraries:
+        if not routes and itineraries:
             alternatives = [
                 f"{item['legs'][0]['line_name']} → {item['legs'][1]['line_name']} "
                 f"(환승: {item['transfer']['official_stop_name']})"
@@ -587,6 +822,9 @@ class BusPredictionService:
             "reasoning": explanation,
             "explanation": explanation,
             "alternatives": alternatives,
+            "recommended_alternative": recommendation,
+            "recommendation_reason": recommendation_reason,
+            "route_options": options,
             "data_mode": "NEO4J_V2_HISTORICAL",
         }
 

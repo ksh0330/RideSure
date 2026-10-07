@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 import app as app_module
 import config
 import data_insert
+from kakao_transit_geometry import BusMatch
 from service import BusPredictionService
 
 
@@ -179,6 +180,7 @@ class PredictionV2ServiceTests(unittest.TestCase):
 
     def test_user_input_drives_v2_route_and_historical_evidence(self) -> None:
         repository = Mock()
+        repository.find_one_transfer_routes.return_value = []
         repository.find_stops_by_name.side_effect = [
             [{"stop_id": "s-origin", "stop_name": "대전역"}],
             [{"stop_id": "s-destination", "stop_name": "세종시청.교육청.시의회"}],
@@ -235,6 +237,9 @@ class PredictionV2ServiceTests(unittest.TestCase):
         self.assertEqual(result["routes"][0]["line_name"], "B1")
         self.assertEqual(result["routes"][0]["onboard_count"], 17)
         self.assertEqual(result["routes"][0]["boarding_guidance"], "보통")
+        self.assertEqual(result["routes"][0]["boarding_likelihood"], "MEDIUM")
+        self.assertEqual(result["routes"][0]["boarding_likelihood_label"], "보통")
+        self.assertEqual(result["routes"][0]["boarding_likelihood_basis"], "HISTORICAL_RELATIVE_CONGESTION")
         self.assertIsNone(result["routes"][0]["boarding_probability"])
         repository.resolve_congestion.assert_called_once_with(
             "hist-pattern-b1", "o-origin", "2025-11-08", 8
@@ -246,6 +251,7 @@ class PredictionV2ServiceTests(unittest.TestCase):
 
     def test_selected_stop_ids_drive_route_without_name_reresolution(self) -> None:
         repository = Mock()
+        repository.find_one_transfer_routes.return_value = []
         repository.find_stop_by_id.side_effect = [
             {"stop_id": "s-origin", "stop_name": "동명"},
             {"stop_id": "s-destination", "stop_name": "도착"},
@@ -287,6 +293,7 @@ class PredictionV2ServiceTests(unittest.TestCase):
 
     def test_verified_alias_selection_uses_its_occurrence(self) -> None:
         repository = Mock()
+        repository.find_one_transfer_routes.return_value = []
         repository.find_verified_stop_occurrence_by_id.return_value = {
             "stop_id": "s-origin", "stop_name": "과거 명칭", "occurrence_id": "verified-occ",
             "official_stop_name": "현재 명칭", "official_stop_id": "official-1",
@@ -404,8 +411,114 @@ class PredictionV2ServiceTests(unittest.TestCase):
             "legs": [first, second],
         }
 
+    def test_recommendation_requires_poor_direct_and_strictly_better_known_alternative(self) -> None:
+        choose = BusPredictionService._recommended_alternative
+        direct = [{"boarding_likelihood": "MEDIUM"}]
+        transfer = [{"boarding_likelihood": "HIGH", "boarding_likelihood_label": "높음"}]
+        self.assertIsNone(choose(direct, transfer), "a good direct route needs no forced transfer")
+        direct[0]["boarding_likelihood"] = "LOW"
+        self.assertEqual(choose(direct, transfer), {
+            "kind": "ONE_TRANSFER", "index": 0,
+            "boarding_likelihood": "HIGH", "boarding_likelihood_label": "높음",
+        })
+        direct[0]["boarding_likelihood"] = "VERY_LOW"
+        transfer[0]["boarding_likelihood"] = "MEDIUM"
+        self.assertEqual(choose(direct, transfer)["boarding_likelihood"], "MEDIUM")
+        direct[0]["boarding_likelihood"] = "LOW"
+        transfer[0]["boarding_likelihood"] = "VERY_LOW"
+        self.assertIsNone(choose(direct, transfer), "a worse transfer cannot be recommended")
+        transfer[0]["boarding_likelihood"] = "UNKNOWN"
+        self.assertIsNone(choose(direct, transfer), "unknown evidence is not an improvement")
+
+    def test_direct_and_verified_transfer_are_considered_together(self) -> None:
+        repository = Mock()
+        repository.find_stops_by_name.side_effect = [
+            [{"stop_id": "origin", "stop_name": "출발"}],
+            [{"stop_id": "destination", "stop_name": "도착"}],
+        ]
+        direct = {
+            "line_id": "b1", "line_name": "B1", "pattern_id": "p-direct",
+            "origin_occurrence_id": "origin-direct", "destination_occurrence_id": "dest-direct",
+            "hops": 3, "stops": [
+                {"stop_id": "origin", "stop_name": "출발"},
+                {"stop_id": "destination", "stop_name": "도착"},
+            ],
+        }
+        repository.find_direct_routes.return_value = [direct]
+        repository.find_one_transfer_routes.return_value = [self.transfer_candidate()]
+        levels = iter(("HIGH", "LOW", "MEDIUM"))
+        repository.resolve_congestion.side_effect = lambda *_: {
+            "source": "HISTORICAL_OBSERVATION", "status": "AVAILABLE",
+            "onboard_count": 12, "relative_percentile": 60,
+            "congestion_level": (level := next(levels)), "boarding_guidance": level,
+            "sample_size": 10,
+        }
+        service = BusPredictionService.__new__(BusPredictionService)
+        service.repository = repository
+        service.predict_with_llm = Mock(return_value="현재 경로")
+        result = service.predict_boarding("출발", "도착")
+        self.assertEqual(result["routes"][0]["boarding_likelihood"], "LOW")
+        self.assertEqual(result["itineraries"][0]["boarding_likelihood"], "MEDIUM")
+        self.assertEqual(result["recommended_alternative"]["kind"], "ONE_TRANSFER")
+        self.assertIn("1단계 높습니다", result["recommendation_reason"])
+        self.assertEqual([option["tag"] for option in result["route_options"]],
+                         ["CURRENT", "RECOMMENDED"])
+        self.assertEqual(result["route_options"][1]["title"], "1000 → 1004")
+        self.assertIsNone(result["route_options"][1]["onboard_count"],
+                          "two transfer-leg counts must not be combined")
+        self.assertEqual([leg["onboard_count"] for leg in result["route_options"][1]["legs"]], [12, 12])
+        self.assertIsNone(result["routes"][0]["boarding_probability"])
+        repository.find_one_transfer_routes.assert_called()
+
+    def test_same_likelihood_time_recommendation_requires_two_verified_totals(self) -> None:
+        repository = Mock()
+        repository.find_stops_by_name.side_effect = [
+            [{"stop_id": "origin", "stop_name": "출발"}],
+            [{"stop_id": "destination", "stop_name": "도착"}],
+        ]
+        base = {
+            "line_id": "line-a", "line_name": "1000", "pattern_id": "pattern-a",
+            "origin_occurrence_id": "origin-a", "destination_occurrence_id": "dest-a", "hops": 1,
+            "stops": [{"stop_id": "origin", "stop_name": "출발"},
+                      {"stop_id": "destination", "stop_name": "도착"}],
+        }
+        other = {**base, "line_id": "line-b", "line_name": "1001", "pattern_id": "pattern-b"}
+        repository.find_direct_routes.return_value = [base, other]
+        repository.find_one_transfer_routes.return_value = []
+        repository.resolve_congestion.return_value = {
+            "source": "HISTORICAL_OBSERVATION", "status": "AVAILABLE",
+            "onboard_count": 8, "relative_percentile": 80,
+            "congestion_level": "HIGH", "boarding_guidance": "혼잡", "sample_size": 10,
+        }
+        service = BusPredictionService.__new__(BusPredictionService)
+        service.repository = repository
+        service.predict_with_llm = Mock(return_value="현재 경로")
+        service.geometry_client = Mock()
+        service.geometry_client.for_leg_match.side_effect = [
+            BusMatch([{"lat": 36.1, "lon": 127.1}, {"lat": 36.2, "lon": 127.2}], 2500, 3600),
+            BusMatch([{"lat": 36.1, "lon": 127.1}, {"lat": 36.2, "lon": 127.2}], 2300, 3000),
+        ]
+        result = service.predict_boarding("출발", "도착")
+        self.assertEqual(result["recommended_alternative"]["kind"], "DIRECT")
+        self.assertIn("10분 짧습니다", result["recommendation_reason"])
+        self.assertIn("최소시간", result["route_options"][1]["badges"])
+
+        service.geometry_client.for_leg_match.side_effect = [
+            BusMatch([{"lat": 36.1, "lon": 127.1}, {"lat": 36.2, "lon": 127.2}], 2500, 3600),
+            BusMatch([{"lat": 36.1, "lon": 127.1}, {"lat": 36.2, "lon": 127.2}], 2300, None),
+        ]
+        repository.find_stops_by_name.side_effect = [
+            [{"stop_id": "origin", "stop_name": "출발"}],
+            [{"stop_id": "destination", "stop_name": "도착"}],
+        ]
+        unverified = service.predict_boarding("출발", "도착")
+        self.assertIsNone(unverified["recommended_alternative"])
+        self.assertEqual(len(unverified["route_options"]), 1,
+                         "an unverified faster claim must not create a comparison card")
+
     def test_direct_route_remains_preferred_over_transfer(self) -> None:
         repository = Mock()
+        repository.find_one_transfer_routes.return_value = []
         repository.find_stops_by_name.side_effect = [
             [{"stop_id": "origin", "stop_name": "출발"}],
             [{"stop_id": "destination", "stop_name": "도착"}],
@@ -426,7 +539,7 @@ class PredictionV2ServiceTests(unittest.TestCase):
 
         self.assertEqual(len(result["routes"]), 1)
         self.assertEqual(result["itineraries"], [])
-        repository.find_one_transfer_routes.assert_not_called()
+        repository.find_one_transfer_routes.assert_called()
 
     def test_transfer_service_keeps_leg_congestion_separate_and_historical_names(self) -> None:
         repository = Mock()
@@ -459,6 +572,10 @@ class PredictionV2ServiceTests(unittest.TestCase):
         self.assertEqual(itinerary["legs"][1]["onboard_count"], 7)
         self.assertEqual(itinerary["legs"][0]["evidence_source"], "HISTORICAL_OBSERVATION")
         self.assertEqual(itinerary["legs"][1]["evidence_source"], "HISTORICAL_PROFILE")
+        self.assertEqual(itinerary["legs"][0]["boarding_likelihood_label"], "보통")
+        self.assertEqual(itinerary["legs"][0]["boarding_likelihood_basis"], "HISTORICAL_RELATIVE_CONGESTION")
+        self.assertEqual(itinerary["legs"][1]["boarding_likelihood_label"], "높음")
+        self.assertEqual(itinerary["boarding_likelihood_label"], "보통")
         self.assertEqual(itinerary["transfer"]["historical_name_leg1"], "환승 과거명 A")
         self.assertEqual(itinerary["transfer"]["historical_name_leg2"], "환승 과거명 B")
         self.assertIsNone(itinerary["legs"][0]["boarding_probability"])
