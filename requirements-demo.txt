@@ -1,0 +1,8 @@
+# Historical Neo4j v2 demo and optional Kakao visualization; no EXAONE weights or GPU stack.
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+neo4j==6.2.0
+pandas==3.0.5
+requests==2.34.2
+python-dotenv==1.2.2
+httpx==0.28.1
