@@ -1,0 +1,32 @@
+{
+  "route_id": "DJB30300128",
+  "review_source": "Saved TAGO B1 getRouteInfoIem and getRouteAcctoThrghSttnList snapshots, 2026-10-02",
+  "mappings": [
+    {
+      "historical_occurrence_id": "hist-occ-3e45219d349c7168c1260ad019c34ad3eaf0576993eaa032188e74d9f008ced6",
+      "historical_seq": 13,
+      "historical_name": "세종시청.교육청.시의회",
+      "previous_historical": "소담동",
+      "next_historical": "보람동.대평동",
+      "official_node_order": 14,
+      "official_node_id": "DJB8007295",
+      "official_name": "세종시청,시의회,교육청",
+      "previous_official": "소담동(새샘마을)",
+      "next_official": "보람동,대평동",
+      "review_reason": "Outbound B1: the same three named institutions appear in a different presentation order. The stop is between 소담동 and 보람동.대평동 in history and between their corresponding current B1 positions. The distinct reverse-direction occurrence is reviewed separately."
+    },
+    {
+      "historical_occurrence_id": "hist-occ-60e013f5e87829c7b736b64f07d99ae3fe6603ee8372aafffc851bfbef0b3ac5",
+      "historical_seq": 42,
+      "historical_name": "세종시청.교육청.시의회",
+      "previous_historical": "보람동.대평동",
+      "next_historical": "소담동",
+      "official_node_order": 43,
+      "official_node_id": "DJB8007296",
+      "official_name": "세종시청,시의회,교육청",
+      "previous_official": "보람동,대평동",
+      "next_official": "소담동(새샘마을)",
+      "review_reason": "Return B1: the same three named institutions appear in a different presentation order. The stop is between 보람동.대평동 and 소담동 in history and between their corresponding current B1 positions. Its official node ID differs from the outbound occurrence."
+    }
+  ]
+}

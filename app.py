@@ -56,8 +56,10 @@ class PredictionRequest(BaseModel):
     destination_lon: Optional[float] = Field(default=None, ge=-180, le=180)
     origin_stop_id: Optional[str] = Field(default=None, min_length=1, max_length=200)
     destination_stop_id: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    origin_occurrence_id: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    destination_occurrence_id: Optional[str] = Field(default=None, min_length=1, max_length=200)
 
-    @field_validator("origin_stop_id", "destination_stop_id")
+    @field_validator("origin_stop_id", "destination_stop_id", "origin_occurrence_id", "destination_occurrence_id")
     @classmethod
     def stop_id_is_not_blank(cls, value: str | None) -> str | None:
         if value is not None and not value.strip():
@@ -66,6 +68,10 @@ class PredictionRequest(BaseModel):
 
     @model_validator(mode="after")
     def coordinates_are_paired(self) -> "PredictionRequest":
+        if self.origin_occurrence_id and not self.origin_stop_id:
+            raise ValueError("origin_occurrence_id requires origin_stop_id")
+        if self.destination_occurrence_id and not self.destination_stop_id:
+            raise ValueError("destination_occurrence_id requires destination_stop_id")
         pairs = (
             ("origin", self.origin_lat, self.origin_lon),
             ("destination", self.destination_lat, self.destination_lon),
@@ -101,6 +107,8 @@ class RouteInfo(BaseModel):
     stops: List[StopInfo]
     geometry: List[GeometryPoint] = Field(default_factory=list)
     geometry_kind: str = "UNAVAILABLE"
+    map_geometry: List[GeometryPoint] = Field(default_factory=list)
+    map_geometry_source: str = "UNAVAILABLE"
     onboard_count: Optional[int] = Field(default=None, ge=0)
     relative_percentile: Optional[float] = Field(default=None, ge=0, le=100)
     congestion_level: str
@@ -144,6 +152,7 @@ class OneTransferItinerary(BaseModel):
 
 class PredictionResponse(BaseModel):
     success: bool
+    result_status: Literal["ROUTE_FOUND", "NO_SUPPORTED_ROUTE"] = "ROUTE_FOUND"
     origin: str
     destination: str
     routes: List[RouteInfo]
@@ -161,6 +170,10 @@ class FrontendConfig(BaseModel):
 class StopSearchCandidate(BaseModel):
     stop_id: str
     stop_name: str
+    occurrence_id: Optional[str] = None
+    official_stop_name: Optional[str] = None
+    official_stop_id: Optional[str] = None
+    match_kind: str = "UNKNOWN"
     line_names: List[str] = Field(default_factory=list)
     occurrence_count: int = Field(ge=1)
     exact_match: bool
@@ -256,6 +269,8 @@ async def predict_boarding(request: PredictionRequest) -> PredictionResponse:
             destination_lon=request.destination_lon,
             origin_stop_id=request.origin_stop_id,
             destination_stop_id=request.destination_stop_id,
+            origin_occurrence_id=request.origin_occurrence_id,
+            destination_occurrence_id=request.destination_occurrence_id,
         )
         return PredictionResponse(**result)
     except ValueError as exc:

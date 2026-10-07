@@ -70,7 +70,7 @@ class MappingPlan:
         return tuple(d for d in self.decisions if d.official is not None)
 
 
-def _name(value: str) -> str:
+def normalize_presentation_name(value: str) -> str:
     # Fold presentation separators only between Hangul syllables. Digits,
     # dashes, brackets, qualifiers, and word order stay meaningful: for
     # example, 오송역2.3.4 must not become equal to 오송역234.
@@ -85,6 +85,9 @@ def _name(value: str) -> str:
                 continue
         result.append(character)
     return " ".join("".join(result).split())
+
+
+_name = normalize_presentation_name
 
 
 def _global_alignment_candidates(
@@ -322,6 +325,11 @@ def apply_mapping_plan(tx: Any, mapping: MappingPlan) -> int:
             "method": decision.method,
             "normalized_name": decision.evidence.get("normalized_name"),
             "name_match_kind": decision.evidence.get("name_match_kind"),
+            "review_reason": decision.evidence.get("review_reason"),
+            "historical_previous_name": decision.evidence.get("historical_previous_name"),
+            "historical_next_name": decision.evidence.get("historical_next_name"),
+            "official_previous_name": decision.evidence.get("official_previous_name"),
+            "official_next_name": decision.evidence.get("official_next_name"),
             "coordinate_source": official.coordinate_source,
             "direction_code": official.direction_code,
         })
@@ -376,6 +384,11 @@ def apply_mapping_plan(tx: Any, mapping: MappingPlan) -> int:
             mapping.mapping_method = r.method,
             mapping.normalized_name = r.normalized_name,
             mapping.name_match_kind = r.name_match_kind,
+            mapping.review_reason = r.review_reason,
+            mapping.historical_previous_name = r.historical_previous_name,
+            mapping.historical_next_name = r.historical_next_name,
+            mapping.official_previous_name = r.official_previous_name,
+            mapping.official_next_name = r.official_next_name,
             mapping.official_source = $tago_source,
             mapping.official_route_id = r.official_route_id,
             mapping.official_node_id = r.official_node_id,

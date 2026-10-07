@@ -13,6 +13,7 @@ from neo4j import GraphDatabase
 
 import config
 from prediction_v2 import V2TransitRepository
+from kakao_transit_geometry import KakaoTransitGeometry
 
 
 logger = logging.getLogger(__name__)
@@ -25,13 +26,21 @@ def _present(value: Any) -> bool:
 class BusPredictionService:
     """Build a structured result from v2 facts, then ask EXAONE to phrase it."""
 
-    def __init__(self, driver: Any | None = None, repository: Any | None = None):
+    def __init__(self, driver: Any | None = None, repository: Any | None = None,
+                 geometry_client: Any | None = None):
         config.validate_required_config(("neo4j_v2", "llm_client"))
         self.driver = driver or GraphDatabase.driver(
             config.NEO4J_V2_URI,
             auth=(config.NEO4J_USER, config.NEO4J_PASS),
         )
         self.repository = repository or V2TransitRepository(self.driver)
+        self.geometry_client = geometry_client or KakaoTransitGeometry(config.KAKAO_REST_API_KEY)
+
+    def _enrich_map_geometry(self, leg: dict[str, Any]) -> None:
+        client = getattr(self, "geometry_client", None)
+        points = client.for_leg(leg) if client is not None else []
+        leg["map_geometry"] = points
+        leg["map_geometry_source"] = "KAKAO_VERIFIED_BUS_PATH" if points else "UNAVAILABLE"
 
     def close(self) -> None:
         self.driver.close()
@@ -76,7 +85,15 @@ class BusPredictionService:
         latitude: float | None,
         longitude: float | None,
         stop_id: str | None = None,
+        occurrence_id: str | None = None,
     ) -> list[dict[str, Any]]:
+        if occurrence_id is not None:
+            if stop_id is None:
+                raise ValueError("정류장 occurrence ID에는 stop ID도 필요합니다.")
+            selected = self.repository.find_verified_stop_occurrence_by_id(occurrence_id)
+            if selected is None or selected.get("stop_id") != stop_id:
+                raise ValueError("검증된 정류장 occurrence ID를 찾지 못했습니다.")
+            return [{**selected, "name": selected["stop_name"], "_selected": True}]
         if stop_id is not None:
             selected = self.repository.find_stop_by_id(stop_id)
             if selected is None:
@@ -102,17 +119,19 @@ class BusPredictionService:
         candidates.extend(self.repository.find_stops_by_name(text, limit=8))
 
         deduplicated: list[dict[str, Any]] = []
-        seen: set[tuple[str | None, str]] = set()
+        seen: set[tuple[str | None, str, str | None]] = set()
         for candidate in candidates:
             name = self._candidate_name(candidate)
             if not name:
                 continue
-            key = (candidate.get("stop_id"), name)
+            key = (candidate.get("stop_id"), name, candidate.get("occurrence_id"))
             if key in seen:
                 continue
             seen.add(key)
             normalized = dict(candidate)
             normalized["name"] = name
+            if candidate.get("match_kind") == "VERIFIED_OFFICIAL_ALIAS":
+                normalized["_selected"] = True
             deduplicated.append(normalized)
         return deduplicated
 
@@ -125,6 +144,7 @@ class BusPredictionService:
             "stop_id": stop.get("stop_id"),
             "occurrence_id": stop.get("occurrence_id"),
             "name": str(name),
+            "official_stop_name": stop.get("official_stop_name"),
             "seq": stop.get("seq"),
             "lat": stop.get("lat"),
             "lon": stop.get("lon"),
@@ -155,17 +175,29 @@ class BusPredictionService:
             for destination in destination_candidates[:8]:
                 origin_id = origin.get("stop_id") if origin.get("_selected") else None
                 destination_id = destination.get("stop_id") if destination.get("_selected") else None
+                origin_occurrence_id = origin.get("occurrence_id") if origin_id else None
+                destination_occurrence_id = destination.get("occurrence_id") if destination_id else None
                 if not origin_id and not destination_id and origin["name"] == destination["name"]:
                     continue
+                occurrence_filters = {}
+                if origin_occurrence_id:
+                    occurrence_filters["origin_occurrence_id"] = origin_occurrence_id
+                if destination_occurrence_id:
+                    occurrence_filters["destination_occurrence_id"] = destination_occurrence_id
                 direct_routes = self.repository.find_direct_routes(
                     origin["name"], destination["name"], limit=20,
                     origin_stop_id=origin_id,
                     destination_stop_id=destination_id,
+                    **occurrence_filters,
                 )
                 for route in direct_routes:
                     if origin_id and route.get("origin_stop_id") != origin_id:
                         continue
                     if destination_id and route.get("destination_stop_id") != destination_id:
+                        continue
+                    if origin_occurrence_id and route.get("origin_occurrence_id") != origin_occurrence_id:
+                        continue
+                    if destination_occurrence_id and route.get("destination_occurrence_id") != destination_occurrence_id:
                         continue
                     candidates.append((route, origin, destination))
 
@@ -296,11 +328,17 @@ class BusPredictionService:
             for destination in destination_candidates[:8]:
                 origin_id = origin.get("stop_id") if origin.get("_selected") else None
                 destination_id = destination.get("stop_id") if destination.get("_selected") else None
+                occurrence_filters = {}
+                if origin_id and origin.get("occurrence_id"):
+                    occurrence_filters["origin_occurrence_id"] = origin["occurrence_id"]
+                if destination_id and destination.get("occurrence_id"):
+                    occurrence_filters["destination_occurrence_id"] = destination["occurrence_id"]
                 if not origin_id and not destination_id and origin["name"] == destination["name"]:
                     continue
                 matches = self.repository.find_one_transfer_routes(
                     origin["name"], destination["name"], limit=20,
                     origin_stop_id=origin_id, destination_stop_id=destination_id,
+                    **occurrence_filters,
                 )
                 for itinerary in matches:
                     legs = itinerary.get("legs") or []
@@ -325,6 +363,14 @@ class BusPredictionService:
                     if origin_id and legs[0]["stops"][0].get("stop_id") != origin_id:
                         continue
                     if destination_id and legs[1]["stops"][-1].get("stop_id") != destination_id:
+                        continue
+                    if occurrence_filters.get("origin_occurrence_id") is not None and (
+                        legs[0].get("origin_occurrence_id") != occurrence_filters["origin_occurrence_id"]
+                    ):
+                        continue
+                    if occurrence_filters.get("destination_occurrence_id") is not None and (
+                        legs[1].get("destination_occurrence_id") != occurrence_filters["destination_occurrence_id"]
+                    ):
                         continue
                     identity = (
                         legs[0]["pattern_id"], legs[0]["origin_occurrence_id"],
@@ -464,15 +510,20 @@ class BusPredictionService:
         destination_lon: float | None = None,
         origin_stop_id: str | None = None,
         destination_stop_id: str | None = None,
+        origin_occurrence_id: str | None = None,
+        destination_occurrence_id: str | None = None,
     ) -> dict[str, Any]:
         origin = origin.strip()
         destination = destination.strip()
         if not origin or not destination:
             raise ValueError("origin and destination are required")
         hour, service_date = self._parse_inputs(departure_time, date)
-        origin_candidates = self._stop_candidates(origin, origin_lat, origin_lon, origin_stop_id)
+        origin_candidates = self._stop_candidates(
+            origin, origin_lat, origin_lon, origin_stop_id, origin_occurrence_id
+        )
         destination_candidates = self._stop_candidates(
-            destination, destination_lat, destination_lon, destination_stop_id
+            destination, destination_lat, destination_lon, destination_stop_id,
+            destination_occurrence_id,
         )
         if not origin_candidates:
             raise ValueError(f"출발지와 일치하는 정류장을 찾지 못했습니다: {origin}")
@@ -486,11 +537,23 @@ class BusPredictionService:
                 for route, origin_stop, destination_stop in direct
             ]
             explanation = self.predict_with_llm(routes, origin, destination)
+            self._enrich_map_geometry(routes[0])
             itineraries: list[dict[str, Any]] = []
         else:
             transfer_candidates = self._transfer_candidates(origin_candidates, destination_candidates)
             if not transfer_candidates:
-                raise ValueError("현재 Neo4j v2 데이터에서 이용 가능한 직접 또는 1회 환승 경로를 찾지 못했습니다.")
+                return {
+                    "success": True,
+                    "result_status": "NO_SUPPORTED_ROUTE",
+                    "origin": origin,
+                    "destination": destination,
+                    "routes": [],
+                    "itineraries": [],
+                    "reasoning": "현재 데이터 범위에서 경로를 찾지 못했습니다.",
+                    "explanation": "현재 데이터 범위에서 경로를 찾지 못했습니다.",
+                    "alternatives": [],
+                    "data_mode": "NEO4J_V2_HISTORICAL",
+                }
             itineraries = []
             for candidate in transfer_candidates:
                 legs = [self._build_transfer_leg(leg, service_date, hour)
@@ -501,6 +564,8 @@ class BusPredictionService:
                 })
             routes = []
             explanation = self._transfer_fallback_explanation(itineraries)
+            for leg in itineraries[0]["legs"]:
+                self._enrich_map_geometry(leg)
         alternatives = [
             f"{route['line_name']}: {route['origin_stop']['name']} → "
             f"{route['destination_stop']['name']}"
@@ -514,6 +579,7 @@ class BusPredictionService:
             ]
         return {
             "success": True,
+            "result_status": "ROUTE_FOUND",
             "origin": origin,
             "destination": destination,
             "routes": routes,

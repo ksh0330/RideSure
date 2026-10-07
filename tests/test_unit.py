@@ -285,6 +285,51 @@ class PredictionV2ServiceTests(unittest.TestCase):
             origin_stop_id="s-origin", destination_stop_id="s-destination",
         )
 
+    def test_verified_alias_selection_uses_its_occurrence(self) -> None:
+        repository = Mock()
+        repository.find_verified_stop_occurrence_by_id.return_value = {
+            "stop_id": "s-origin", "stop_name": "과거 명칭", "occurrence_id": "verified-occ",
+            "official_stop_name": "현재 명칭", "official_stop_id": "official-1",
+        }
+        repository.find_stop_by_id.return_value = {"stop_id": "s-destination", "stop_name": "도착"}
+        route = v2_route()
+        route.update(origin_stop_id="s-origin", destination_stop_id="s-destination",
+                     origin_occurrence_id="verified-occ", destination_occurrence_id="o-destination")
+        repository.find_direct_routes.return_value = [route]
+        repository.resolve_congestion.return_value = {
+            "source": "UNKNOWN", "status": "INSUFFICIENT_DATA", "onboard_count": None,
+            "relative_percentile": None, "congestion_level": "UNKNOWN",
+            "boarding_guidance": "데이터 부족", "sample_size": 0,
+        }
+        service = BusPredictionService.__new__(BusPredictionService)
+        service.repository = repository
+        service.predict_with_llm = Mock(return_value="설명")
+
+        result = service.predict_boarding(
+            "현재 명칭", "도착", origin_stop_id="s-origin",
+            origin_occurrence_id="verified-occ", destination_stop_id="s-destination",
+        )
+
+        self.assertEqual(result["routes"][0]["line_name"], "B1")
+        repository.find_verified_stop_occurrence_by_id.assert_called_once_with("verified-occ")
+        repository.find_stops_by_name.assert_not_called()
+        repository.find_direct_routes.assert_called_once_with(
+            "과거 명칭", "도착", limit=20, origin_stop_id="s-origin",
+            destination_stop_id="s-destination", origin_occurrence_id="verified-occ",
+        )
+
+    def test_unverified_or_mismatched_alias_id_is_rejected(self) -> None:
+        repository = Mock()
+        repository.find_verified_stop_occurrence_by_id.return_value = {
+            "stop_id": "another-stop", "stop_name": "동명",
+        }
+        service = BusPredictionService.__new__(BusPredictionService)
+        service.repository = repository
+        with self.assertRaisesRegex(ValueError, "검증된 정류장 occurrence ID"):
+            service.predict_boarding("현재 명칭", "도착", origin_stop_id="chosen",
+                                     origin_occurrence_id="unverified")
+        repository.find_direct_routes.assert_not_called()
+
     def test_selected_ambiguous_stop_is_not_replaced_by_same_named_stop(self) -> None:
         repository = Mock()
         repository.find_stop_by_id.return_value = {"stop_id": "chosen", "stop_name": "동명"}
@@ -298,8 +343,10 @@ class PredictionV2ServiceTests(unittest.TestCase):
         service = BusPredictionService.__new__(BusPredictionService)
         service.repository = repository
 
-        with self.assertRaisesRegex(ValueError, "직접 또는 1회 환승"):
-            service.predict_boarding("동명", "도착", origin_stop_id="chosen")
+        result = service.predict_boarding("동명", "도착", origin_stop_id="chosen")
+        self.assertEqual(result["result_status"], "NO_SUPPORTED_ROUTE")
+        self.assertEqual(result["routes"], [])
+        self.assertEqual(result["itineraries"], [])
 
         repository.find_direct_routes.assert_called_once_with(
             "동명", "도착", limit=20,
@@ -444,8 +491,9 @@ class PredictionV2ServiceTests(unittest.TestCase):
         service = BusPredictionService.__new__(BusPredictionService)
         service.repository = repository
 
-        with self.assertRaisesRegex(ValueError, "직접 또는 1회 환승"):
-            service.predict_boarding("출발", "도착")
+        result = service.predict_boarding("출발", "도착")
+        self.assertEqual(result["result_status"], "NO_SUPPORTED_ROUTE")
+        self.assertEqual(result["itineraries"], [])
 
 
 class DataLoaderTests(unittest.TestCase):

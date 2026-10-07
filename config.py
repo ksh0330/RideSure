@@ -72,6 +72,7 @@ class Config:
     LLM_HOST: str = _env("LLM_HOST", "127.0.0.1")
     LLM_PORT: int = _env_int("LLM_PORT", 8001)
     KAKAO_MAP_JAVASCRIPT_KEY: str = _env("KAKAO_MAP_JAVASCRIPT_KEY")
+    KAKAO_REST_API_KEY: str = _env("KAKAO_REST_API_KEY")
 
     # Optional official reference data. The service key must never be logged.
     DATA_GO_KR_SERVICE_KEY: str = _env("DATA_GO_KR_SERVICE_KEY")
@@ -99,6 +100,7 @@ APP_PORT = _config.APP_PORT
 LLM_HOST = _config.LLM_HOST
 LLM_PORT = _config.LLM_PORT
 KAKAO_MAP_JAVASCRIPT_KEY = _config.KAKAO_MAP_JAVASCRIPT_KEY
+KAKAO_REST_API_KEY = _config.KAKAO_REST_API_KEY
 DATA_GO_KR_SERVICE_KEY = _config.DATA_GO_KR_SERVICE_KEY
 NATIONAL_BUS_STOP_CSV_DIR = _config.NATIONAL_BUS_STOP_CSV_DIR
 

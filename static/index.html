@@ -9,7 +9,8 @@
   <!-- 레이아웃/지도 높이용 스타일 -->
   <style>
     html, body { height: 100%; margin: 0; }
-    #app { height: 100vh; }
+    #app { min-height: 100vh; }
+    @media (min-width: 768px) { #app { height: 100vh; } }
     #map { width: 100%; height: 100%; }
     .badge {
       background: #1f2937;
@@ -26,25 +27,25 @@
     }
     .badge.boarding { background: #4338ca; }
     .badge.alighting { background: #047857; }
+    .badge.transfer { background: #b45309; }
   </style>
 </head>
 <body class="bg-gray-50">
   <div id="app" class="grid grid-cols-1 md:grid-cols-12">
     <!-- 왼쪽 : 기능 영역 -->
-    <aside class="md:col-span-5 xl:col-span-4 h-full flex flex-col overflow-y-auto">
+    <aside class="md:col-span-5 xl:col-span-4 md:h-full flex flex-col md:overflow-y-auto">
       <div class="max-w-3xl mx-auto w-full p-6 space-y-6">
         <!-- 헤더 -->
         <div class="bg-white rounded-2xl shadow-lg p-8">
           <h1 class="text-3xl font-bold mb-2">🚌 RideSure</h1>
-          <p class="text-gray-600">노선 구조와 승객 관측 근거를 바탕으로 혼잡을 고려한 경로를 안내합니다.</p>
-          <p class="mt-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">승객 수와 혼잡도는 실시간 또는 과거 관측 근거를 표시하며, 근거가 없으면 알 수 없음으로 안내합니다.</p>
+          <p class="text-gray-600">과거 재차인원을 바탕으로 버스 경로와 혼잡을 안내합니다.</p>
         </div>
 
         <!-- 입력 폼 -->
         <div class="bg-white rounded-2xl shadow-lg p-8">
           <div class="space-y-4">
             <div>
-              <label class="block text-sm font-semibold mb-2">📍 출발지</label>
+              <label class="block text-sm font-semibold mb-2">출발지</label>
               <input
                 id="origin-input"
                 type="text"
@@ -55,7 +56,7 @@
             </div>
 
             <div>
-              <label class="block text-sm font-semibold mb-2">🎯 도착지</label>
+              <label class="block text-sm font-semibold mb-2">도착지</label>
               <input
                 id="dest-input"
                 type="text"
@@ -66,18 +67,17 @@
             </div>
 
             <div>
-              <label class="block text-sm font-semibold mb-2">📅 조회일</label>
+              <label class="block text-sm font-semibold mb-2">조회일</label>
               <input
                 id="date-input"
                 type="date"
                 value="2025-11-08"
                 class="w-full px-4 py-3 rounded-xl border-2 border-gray-300 focus:border-indigo-500 focus:outline-none"
               />
-              <p class="mt-2 text-xs text-gray-500">현재 포트폴리오 데이터셋의 관측 기준일은 2025-11-08입니다.</p>
             </div>
 
             <div>
-              <label class="block text-sm font-semibold mb-2">⏰ 출발 시각</label>
+              <label class="block text-sm font-semibold mb-2">출발 시각</label>
               <input
                 id="time-input"
                 type="time"
@@ -90,26 +90,16 @@
               id="predict-btn"
               class="w-full py-4 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition disabled:bg-gray-400 disabled:cursor-not-allowed text-lg"
             >
-              🔍 혼잡 기반 경로 조회
+              경로 조회
             </button>
           </div>
 
           <!-- 상태 메시지 -->
-          <div id="status" class="mt-4 p-4 rounded-xl bg-blue-50 text-sm text-gray-700">
-            출발지, 도착지, 시각을 입력하고 예측 버튼을 눌러주세요.
-          </div>
+          <div id="status" class="hidden" role="status" aria-live="polite"></div>
         </div>
 
         <!-- 결과 표시 -->
         <div id="results-section" class="hidden">
-          <!-- AI 분석 결과 -->
-          <div class="bg-white rounded-2xl shadow-lg p-8 mb-6">
-            <h2 class="text-xl font-bold mb-4">🤖 경로 안내</h2>
-            <div id="reasoning-box" class="p-4 rounded-xl bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-indigo-200">
-              <p id="reasoning-text" class="text-gray-800 leading-relaxed"></p>
-            </div>
-          </div>
-
           <!-- 추천 경로 -->
           <div id="routes-container" class="space-y-4">
             <!-- JavaScript로 동적 생성 -->
@@ -119,7 +109,7 @@
     </aside>
 
     <!-- 오른쪽 : 카카오 지도 -->
-    <main class="md:col-span-7 xl:col-span-8 h-full">
+    <main class="md:col-span-7 xl:col-span-8 h-[60vh] md:h-full">
       <div id="map"></div>
     </main>
   </div>
@@ -136,13 +126,15 @@
     const predictBtn = document.getElementById('predict-btn');
     const statusEl = document.getElementById('status');
     const resultsSection = document.getElementById('results-section');
-    const reasoningText = document.getElementById('reasoning-text');
     const routesContainer = document.getElementById('routes-container');
 
     // 카카오 지도 초기화 후 연결되는 함수들
     let updateMapByText = null;
     let updateMapByRoute = null;
+    let updateMapByItinerary = null;
+    let clearInputMap = null;
     let pendingMapRoute = null;
+    let routeRequestVersion = 0;
     const selectedStops = { origin: null, destination: null };
 
     function isFiniteCoordinate(value, min, max) {
@@ -165,7 +157,6 @@
     function setupStopAutocomplete(input, list, key) {
       let version = 0;
       let timer = null;
-
       function hideResults() {
         list.classList.add('hidden');
         list.replaceChildren();
@@ -190,11 +181,21 @@
             option.type = 'button';
             option.setAttribute('role', 'option');
             option.appendChild(element('span', 'block text-sm font-semibold text-gray-900', stop.stop_name));
-            const lines = Array.isArray(stop.line_names) ? stop.line_names.join(', ') : '';
-            option.appendChild(element('span', 'block text-xs text-gray-500', lines || '노선 정보 없음'));
+            if (stop.match_kind === 'VERIFIED_OFFICIAL_ALIAS' && stop.official_stop_name) {
+              option.appendChild(element('span', 'block text-xs text-indigo-700',
+                `현재 명칭: ${stop.official_stop_name} · 검증된 정류장`));
+            }
+            const lines = Array.isArray(stop.line_names) ? stop.line_names : [];
+            const shortLines = lines.slice(0, 3).join(' · ');
+            const remainder = lines.length > 3 ? ` · 외 ${lines.length - 3}개 노선` : '';
+            option.appendChild(element('span', 'block text-xs text-gray-500',
+              shortLines ? `${shortLines}${remainder}` : '노선 정보 없음'));
             option.addEventListener('click', () => {
               version += 1;
-              selectedStops[key] = { stop_id: stop.stop_id, stop_name: stop.stop_name };
+              selectedStops[key] = {
+                stop_id: stop.stop_id, stop_name: stop.stop_name,
+                occurrence_id: stop.occurrence_id || null
+              };
               input.value = stop.stop_name;
               hideResults();
             });
@@ -203,13 +204,20 @@
           list.classList.remove('hidden');
         } catch (error) {
           if (currentVersion !== version) return;
-          list.replaceChildren(element('p', 'px-3 py-2 text-sm text-red-600', '정류장 검색을 사용할 수 없습니다. 이름으로 조회할 수 있습니다.'));
+          list.replaceChildren(element('p', 'px-3 py-2 text-sm text-red-600', '정류장 검색을 사용할 수 없습니다. 잠시 후 다시 시도하세요.'));
           list.classList.remove('hidden');
         }
       }
 
       input.addEventListener('input', () => {
+        routeRequestVersion += 1;
         selectedStops[key] = null;
+        statusEl.className = 'hidden';
+        statusEl.textContent = '';
+        resultsSection.classList.add('hidden');
+        pendingMapRoute = null;
+        if (typeof updateMapByRoute === 'function') updateMapByRoute(null);
+        if (typeof clearInputMap === 'function') clearInputMap();
         version += 1;
         clearTimeout(timer);
         hideResults();
@@ -239,17 +247,22 @@
         statusEl.className = 'mt-4 p-4 rounded-xl bg-red-50 text-sm text-red-700';
         return;
       }
+      if (!selectedStops.origin || !selectedStops.destination) {
+        statusEl.textContent = '출발지와 도착지의 정류장 검색 결과를 각각 선택하세요.';
+        statusEl.className = 'mt-4 p-4 rounded-xl bg-red-50 text-sm text-red-700';
+        return;
+      }
 
       try {
+        const requestVersion = routeRequestVersion;
         predictBtn.disabled = true;
-        predictBtn.textContent = '⏳ 경로·혼잡 분석 중...';
-        statusEl.textContent = '🔍 경로를 분석하고 있습니다...';
+        predictBtn.textContent = '경로 조회 중...';
+        statusEl.textContent = '경로를 찾고 있습니다...';
         statusEl.className = 'mt-4 p-4 rounded-xl bg-blue-50 text-sm text-gray-700';
         resultsSection.classList.add('hidden');
         pendingMapRoute = null;
         if (typeof updateMapByRoute === 'function') updateMapByRoute(null);
 
-        console.log(`📍 예측 요청: ${origin} → ${dest} @ ${time}`);
 
         // 지오코딩 성공 시 지도 마커 표시와 함께 API 요청 좌표로 사용한다.
         let inputCoordinates = null;
@@ -262,6 +275,7 @@
             statusEl.textContent = '위치 좌표 없이 정류장 이름으로 경로를 조회합니다...';
           }
         }
+        if (requestVersion !== routeRequestVersion) return;
 
         const requestBody = {
           origin,
@@ -269,8 +283,14 @@
           departure_time: time,
           date
         };
-        if (selectedStops.origin) requestBody.origin_stop_id = selectedStops.origin.stop_id;
-        if (selectedStops.destination) requestBody.destination_stop_id = selectedStops.destination.stop_id;
+        requestBody.origin_stop_id = selectedStops.origin.stop_id;
+        requestBody.destination_stop_id = selectedStops.destination.stop_id;
+        if (selectedStops.origin.occurrence_id) {
+          requestBody.origin_occurrence_id = selectedStops.origin.occurrence_id;
+        }
+        if (selectedStops.destination.occurrence_id) {
+          requestBody.destination_occurrence_id = selectedStops.destination.occurrence_id;
+        }
         if (inputCoordinates?.origin && inputCoordinates?.destination) {
           requestBody.origin_lat = inputCoordinates.origin.lat;
           requestBody.origin_lon = inputCoordinates.origin.lon;
@@ -285,7 +305,6 @@
           body: JSON.stringify(requestBody)
         });
 
-        console.log('📥 API 응답 상태:', response.status);
 
         if (!response.ok) {
           const errorData = await response.json();
@@ -293,16 +312,15 @@
         }
 
         const data = await response.json();
-        console.log('✅ API 응답:', data);
+        if (requestVersion !== routeRequestVersion) return;
 
         if (!data.success) {
           throw new Error(data.message || data.detail || '조회 가능한 경로가 없습니다.');
         }
 
         displayResults(data);
-
-        statusEl.textContent = '✅ 분석이 완료되었습니다!';
-        statusEl.className = 'mt-4 p-4 rounded-xl bg-green-50 text-sm text-green-700';
+        statusEl.textContent = '';
+        statusEl.className = 'hidden';
 
       } catch (e) {
         statusEl.textContent = `❌ 오류: ${e.message}`;
@@ -310,7 +328,7 @@
         console.error('❌ 예측 실패:', e);
       } finally {
         predictBtn.disabled = false;
-        predictBtn.textContent = '🔍 혼잡 기반 경로 조회';
+        predictBtn.textContent = '경로 조회';
       }
     }
 
@@ -327,138 +345,106 @@
       return stop.name || stop.stop_name || '';
     }
 
-    function displayValue(value, suffix = '') {
-      return value === null || value === undefined || value === '' ? '알 수 없음' : `${value}${suffix}`;
-    }
+    const congestionStyles = {
+      LOW: { label: '여유', className: 'bg-green-50 text-green-800', dot: 'bg-green-500' },
+      MEDIUM: { label: '보통', className: 'bg-yellow-50 text-yellow-800', dot: 'bg-yellow-500' },
+      HIGH: { label: '혼잡', className: 'bg-orange-50 text-orange-800', dot: 'bg-orange-500' },
+      VERY_HIGH: { label: '매우 혼잡', className: 'bg-red-50 text-red-800', dot: 'bg-red-500' },
+      UNKNOWN: { label: '정보 없음', className: 'bg-gray-100 text-gray-600', dot: 'bg-gray-400' }
+    };
 
-    function congestionBadgeClasses(level) {
-      const normalized = String(level || '').toUpperCase();
-      if (['LOW', '여유', '낮음'].includes(normalized)) return 'bg-green-100 text-green-700';
-      if (['MEDIUM', '보통'].includes(normalized)) return 'bg-yellow-100 text-yellow-700';
-      if (['HIGH', 'VERY_HIGH', '혼잡', '높음', '매우 혼잡'].includes(normalized)) return 'bg-red-100 text-red-700';
-      return 'bg-gray-100 text-gray-700';
-    }
-
-    function appendMetric(grid, icon, label, value) {
-      const wrapper = element('div', 'flex items-start gap-2');
-      wrapper.appendChild(element('span', 'text-2xl', icon));
-      const content = element('div');
-      content.appendChild(element('div', 'text-gray-500', label));
-      content.appendChild(element('div', 'font-semibold break-words', value));
-      wrapper.appendChild(content);
-      grid.appendChild(wrapper);
-    }
-
-    function routeHasDrawableGeometry(route) {
-      const geometry = Array.isArray(route?.geometry) ? route.geometry : [];
-      if (geometry.map(normalizeCoordinate).filter(Boolean).length >= 2) return true;
-      const stops = Array.isArray(route?.stops) ? route.stops : [];
-      return stops.map(normalizeCoordinate).filter(Boolean).length >= 2;
+    function evidenceRow(route) {
+      const row = element('div', 'mt-3 flex flex-wrap items-center gap-2 text-sm');
+      const style = congestionStyles[route.congestion_level] || congestionStyles.UNKNOWN;
+      const level = element('span', `inline-flex items-center gap-2 rounded-full px-3 py-1 font-semibold ${style.className}`);
+      level.appendChild(element('span', `h-2.5 w-2.5 rounded-full ${style.dot}`));
+      level.appendChild(element('span', '', style.label));
+      row.appendChild(level);
+      const countText = route.onboard_count === null || route.onboard_count === undefined
+        ? '재차인원 정보 없음' : `재차인원 ${route.onboard_count}명`;
+      row.appendChild(element('span', 'rounded-full bg-slate-100 px-3 py-1 text-slate-700', countText));
+      const stops = Array.isArray(route.stops) ? route.stops.length : 0;
+      if (stops) row.appendChild(element('span', 'rounded-full bg-slate-100 px-3 py-1 text-slate-700', `${stops}정류장`));
+      return row;
     }
 
     function createRouteCard(route, index) {
       const card = element(
-        'div',
-        `bg-white rounded-2xl shadow-lg p-6 border-2 ${index === 0 ? 'border-indigo-500' : 'border-gray-200'}`
+        'article',
+        `bg-white rounded-2xl shadow-sm p-5 border ${index === 0 ? 'border-indigo-300' : 'border-gray-200'}`
       );
-
-      if (index === 0) {
-        card.appendChild(element(
-          'span',
-          'mb-3 inline-flex items-center gap-1 px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs',
-          '✨ 추천 경로'
-        ));
-      }
-
-      const header = element('div', 'flex items-start justify-between gap-3 mb-4');
-      const titleBlock = element('div');
-      titleBlock.appendChild(element('h3', 'text-2xl font-bold', route.line_name || '노선 정보 없음'));
-      if (route.pattern_id) {
-        titleBlock.appendChild(element('div', 'mt-1 text-xs text-gray-500', `패턴 ${route.pattern_id}`));
-      }
-      header.appendChild(titleBlock);
-      const congestion = route.congestion_level || '알 수 없음';
-      header.appendChild(element(
-        'span',
-        `shrink-0 px-4 py-2 rounded-full text-sm font-bold ${congestionBadgeClasses(congestion)}`,
-        `혼잡도 ${congestion}`
-      ));
-      card.appendChild(header);
-
-      const metrics = element('div', 'grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm');
-      appendMetric(metrics, '🚌', '차내 재차인원', displayValue(route.onboard_count, '명'));
-      const percentile = route.relative_percentile ?? route.percentile;
-      appendMetric(metrics, '📊', '상대 혼잡 백분위', displayValue(percentile, '%'));
-      appendMetric(metrics, '🧾', '관측 근거', displayValue(route.evidence_source));
-      appendMetric(metrics, '🚏', '승하차 정류장', `${stopName(route.origin_stop) || '알 수 없음'} → ${stopName(route.destination_stop) || '알 수 없음'}`);
-      card.appendChild(metrics);
-
-      if (route.boarding_guidance) {
-        const guidance = element('div', 'mt-4 p-3 rounded-xl bg-blue-50 text-sm text-blue-900');
-        guidance.appendChild(element('div', 'text-xs font-semibold text-blue-600 mb-1', '탑승 안내'));
-        guidance.appendChild(element('div', '', route.boarding_guidance));
-        card.appendChild(guidance);
-      }
-
-      const stops = Array.isArray(route.stops) ? route.stops.map(stopName).filter(Boolean) : [];
-      if (stops.length) {
-        const stopBox = element('div', 'mt-4 p-3 rounded-xl bg-gray-50');
-        stopBox.appendChild(element('div', 'text-xs text-gray-500 mb-1', `경유 정류장 ${stops.length}곳`));
-        stopBox.appendChild(element('div', 'text-sm font-medium leading-relaxed', stops.join(' → ')));
-        card.appendChild(stopBox);
-      }
-
-      const geometryNote = routeHasDrawableGeometry(route)
-        ? `경로 좌표 유형: ${route.geometry_kind || 'stop-to-stop'} · 지도 선은 반환된 정류장 좌표를 잇는 stop-to-stop 근사 경로입니다.`
-        : '표시할 수 있는 경로 좌표가 없어 지도 선을 생략했습니다.';
-      card.appendChild(element('p', 'mt-3 text-xs text-gray-500', geometryNote));
+      card.appendChild(element('h3', 'text-2xl font-bold text-indigo-800', route.line_name || '노선 정보 없음'));
+      card.appendChild(element('p', 'mt-2 text-sm font-medium text-gray-800',
+        `${stopName(route.origin_stop) || '알 수 없음'} → ${stopName(route.destination_stop) || '알 수 없음'}`));
+      card.appendChild(evidenceRow(route));
       return card;
     }
 
-    function alternativeText(alternative) {
-      if (typeof alternative === 'string') return alternative;
-      if (!alternative || typeof alternative !== 'object') return '';
-      return alternative.recommendation || alternative.reason || alternative.description || alternative.line_name || '';
+    function completeLegCoordinates(leg) {
+      if (leg?.map_geometry_source !== 'KAKAO_VERIFIED_BUS_PATH') return [];
+      const geometry = Array.isArray(leg.map_geometry) ? leg.map_geometry : [];
+      const points = geometry.map(normalizeCoordinate);
+      return points.length >= 2 && points.every(Boolean) ? points : [];
+    }
+
+    function createTransferLeg(leg, number) {
+      const section = element('section', `border-l-4 pl-4 py-1 ${number === 1 ? 'border-indigo-500' : 'border-emerald-600'}`);
+      section.appendChild(element('div', 'text-xs font-semibold text-gray-500', `${number}구간`));
+      section.appendChild(element('h4', 'mt-1 text-xl font-bold text-gray-900', leg.line_name || '노선 정보 없음'));
+      section.appendChild(element('p', 'mt-1 text-sm font-medium text-gray-800',
+        `${stopName(leg.origin_stop) || '알 수 없음'} → ${stopName(leg.destination_stop) || '알 수 없음'}`));
+      section.appendChild(evidenceRow(leg));
+      return section;
+    }
+
+    function createItineraryCard(itinerary, origin, destination, index) {
+      const legs = Array.isArray(itinerary?.legs) ? itinerary.legs : [];
+      if (legs.length !== 2) return null;
+      const transfer = itinerary.transfer || {};
+      const card = element('article',
+        `bg-white rounded-2xl shadow-sm p-5 border ${index === 0 ? 'border-indigo-300' : 'border-gray-200'} space-y-5`);
+      card.appendChild(element('h3', 'text-lg font-bold text-gray-900', '1회 환승'));
+      card.appendChild(createTransferLeg(legs[0], 1));
+
+      const transferBox = element('section', 'border-l-4 border-amber-400 pl-4 py-1');
+      transferBox.appendChild(element('div', 'text-xs font-bold text-amber-800', '환승'));
+      transferBox.appendChild(element('p', 'text-sm font-medium text-gray-800',
+        transfer.official_stop_name || '환승 정류장'));
+      card.appendChild(transferBox);
+      card.appendChild(createTransferLeg(legs[1], 2));
+      return card;
     }
 
     function displayResults(data) {
       resultsSection.classList.remove('hidden');
-      reasoningText.textContent = typeof data.reasoning === 'string'
-        ? data.reasoning
-        : '구조화된 노선 및 혼잡 근거를 기준으로 추천했습니다.';
       routesContainer.replaceChildren();
 
       const routes = Array.isArray(data.routes) ? data.routes : [];
+      const itineraries = Array.isArray(data.itineraries) ? data.itineraries : [];
       if (routes.length) {
         routes.forEach((route, index) => routesContainer.appendChild(createRouteCard(route || {}, index)));
         pendingMapRoute = routes[0];
         if (typeof updateMapByRoute === 'function') updateMapByRoute(routes[0]);
+      } else if (itineraries.length) {
+        itineraries.forEach((itinerary, index) => {
+          const card = createItineraryCard(itinerary, data.origin, data.destination, index);
+          if (card) routesContainer.appendChild(card);
+        });
+        pendingMapRoute = { itinerary: itineraries[0] };
+        if (typeof updateMapByItinerary === 'function') updateMapByItinerary(itineraries[0]);
       } else {
         routesContainer.appendChild(element(
-          'div',
-          'bg-white rounded-2xl shadow-lg p-6 text-gray-600',
-          '조회 조건에 맞는 경로가 없습니다.'
+          'section',
+          'bg-white rounded-2xl border border-gray-200 p-6 text-gray-700',
+          '현재 데이터 범위에서 경로를 찾지 못했습니다.'
         ));
+        routesContainer.appendChild(element('p', 'px-2 text-sm text-gray-500',
+          '다른 인근 정류장을 선택하거나 출발지/도착지를 변경해 보세요.'));
         pendingMapRoute = null;
+        if (typeof clearInputMap === 'function') clearInputMap();
         if (typeof updateMapByRoute === 'function') updateMapByRoute(null);
       }
 
-      const alternatives = Array.isArray(data.alternatives)
-        ? data.alternatives.map(alternativeText).filter(Boolean)
-        : [];
-      if (alternatives.length) {
-        const box = element('div', 'bg-amber-50 rounded-2xl border-2 border-amber-200 p-6');
-        box.appendChild(element('h3', 'text-lg font-bold mb-3', '💡 대안 경로'));
-        const list = element('ul', 'space-y-2');
-        alternatives.forEach(text => {
-          const item = element('li', 'flex items-start gap-2');
-          item.appendChild(element('span', 'text-amber-600 mt-1', '•'));
-          item.appendChild(element('span', 'text-gray-700', text));
-          list.appendChild(item);
-        });
-        box.appendChild(list);
-        routesContainer.appendChild(box);
-      }
     }
 
     // 이벤트 리스너
@@ -560,7 +546,9 @@
           let destinationOverlay = null;
           let boardingOverlay = null;
           let alightingOverlay = null;
+          let transferOverlay = null;
           let routePolyline = null;
+          let transferPolylines = [];
           let routePositions = [];
 
           function setInputOverlay(current, label, coordinate) {
@@ -581,19 +569,35 @@
             if (destinationOverlay) positions.push(destinationOverlay.getPosition());
             if (boardingOverlay) positions.push(boardingOverlay.getPosition());
             if (alightingOverlay) positions.push(alightingOverlay.getPosition());
+            if (transferOverlay) positions.push(transferOverlay.getPosition());
             positions.forEach(position => bounds.extend(position));
-            if (positions.length) map.setBounds(bounds, 50, 50, 50, 50);
+            if (positions.length > 1) map.setBounds(bounds, 72, 56, 72, 56);
+            else if (positions.length === 1) {
+              map.setCenter(positions[0]);
+              map.setLevel(5);
+            }
           }
 
           function clearReturnedRoute() {
             if (routePolyline) routePolyline.setMap(null);
+            transferPolylines.forEach(polyline => polyline.setMap(null));
             if (boardingOverlay) boardingOverlay.setMap(null);
             if (alightingOverlay) alightingOverlay.setMap(null);
+            if (transferOverlay) transferOverlay.setMap(null);
             routePolyline = null;
+            transferPolylines = [];
             boardingOverlay = null;
             alightingOverlay = null;
+            transferOverlay = null;
             routePositions = [];
           }
+
+          clearInputMap = () => {
+            if (originOverlay) originOverlay.setMap(null);
+            if (destinationOverlay) destinationOverlay.setMap(null);
+            originOverlay = null;
+            destinationOverlay = null;
+          };
 
           function geocode(query) {
             return new Promise((resolve, reject) => {
@@ -618,22 +622,8 @@
             });
           }
 
-          function stopCoordinate(primaryStop, stops, useLast) {
-            const primary = normalizeCoordinate(primaryStop);
-            if (primary) return primary;
-            const candidates = (Array.isArray(stops) ? stops : []).map(normalizeCoordinate).filter(Boolean);
-            if (!candidates.length) return null;
-            return useLast ? candidates[candidates.length - 1] : candidates[0];
-          }
-
           function routeCoordinates(route) {
-            const geometry = (Array.isArray(route?.geometry) ? route.geometry : [])
-              .map(normalizeCoordinate)
-              .filter(Boolean);
-            if (geometry.length >= 2) return geometry;
-            return (Array.isArray(route?.stops) ? route.stops : [])
-              .map(normalizeCoordinate)
-              .filter(Boolean);
+            return completeLegCoordinates(route);
           }
 
           updateMapByRoute = route => {
@@ -642,10 +632,10 @@
               fitMap();
               return;
             }
+            clearInputMap();
 
-            const stops = Array.isArray(route.stops) ? route.stops : [];
-            const boardingCoordinate = stopCoordinate(route.origin_stop, stops, false);
-            const alightingCoordinate = stopCoordinate(route.destination_stop, stops, true);
+            const boardingCoordinate = normalizeCoordinate(route.origin_stop);
+            const alightingCoordinate = normalizeCoordinate(route.destination_stop);
             const coordinates = routeCoordinates(route);
             routePositions = coordinates.map(point => new kakao.maps.LatLng(point.lat, point.lon));
 
@@ -662,15 +652,64 @@
 
             if (boardingCoordinate) {
               const position = new kakao.maps.LatLng(boardingCoordinate.lat, boardingCoordinate.lon);
-              const label = stopName(route.origin_stop) || stopName(stops[0]);
-              boardingOverlay = makeBadge(`승차${label ? ` · ${label}` : ''}`, position, 'boarding');
+              boardingOverlay = makeBadge('출발', position, 'boarding');
               boardingOverlay.setMap(map);
             }
             if (alightingCoordinate) {
               const position = new kakao.maps.LatLng(alightingCoordinate.lat, alightingCoordinate.lon);
-              const label = stopName(route.destination_stop) || stopName(stops[stops.length - 1]);
-              alightingOverlay = makeBadge(`하차${label ? ` · ${label}` : ''}`, position, 'alighting');
+              alightingOverlay = makeBadge('도착', position, 'alighting');
               alightingOverlay.setMap(map);
+            }
+            fitMap(routePositions);
+          };
+
+          updateMapByItinerary = itinerary => {
+            clearReturnedRoute();
+            const legs = Array.isArray(itinerary?.legs) ? itinerary.legs : [];
+            if (legs.length !== 2) {
+              fitMap();
+              return;
+            }
+            // Bounds use every validated BUS path point and the verified stop markers.
+            clearInputMap();
+
+            legs.forEach((leg, index) => {
+              const points = completeLegCoordinates(leg);
+              if (!points.length) return;
+              const positions = points.map(point => new kakao.maps.LatLng(point.lat, point.lon));
+              routePositions.push(...positions);
+              const polyline = new kakao.maps.Polyline({
+                path: positions,
+                strokeWeight: 6,
+                strokeColor: index === 0 ? '#4f46e5' : '#047857',
+                strokeOpacity: 0.85,
+                strokeStyle: 'solid'
+              });
+              polyline.setMap(map);
+              transferPolylines.push(polyline);
+            });
+
+            const originPoint = normalizeCoordinate(legs[0].origin_stop);
+            const destinationPoint = normalizeCoordinate(legs[1].destination_stop);
+            const firstTransferPoint = normalizeCoordinate(legs[0].destination_stop);
+            const secondTransferPoint = normalizeCoordinate(legs[1].origin_stop);
+            const transferPoint = firstTransferPoint && secondTransferPoint &&
+              firstTransferPoint.lat === secondTransferPoint.lat &&
+              firstTransferPoint.lon === secondTransferPoint.lon ? firstTransferPoint : null;
+            if (originPoint) {
+              boardingOverlay = makeBadge('출발',
+                new kakao.maps.LatLng(originPoint.lat, originPoint.lon), 'boarding');
+              boardingOverlay.setMap(map);
+            }
+            if (destinationPoint) {
+              alightingOverlay = makeBadge('도착',
+                new kakao.maps.LatLng(destinationPoint.lat, destinationPoint.lon), 'alighting');
+              alightingOverlay.setMap(map);
+            }
+            if (transferPoint) {
+              transferOverlay = makeBadge('환승',
+                new kakao.maps.LatLng(transferPoint.lat, transferPoint.lon), 'transfer');
+              transferOverlay.setMap(map);
             }
             fitMap(routePositions);
           };
@@ -689,7 +728,8 @@
             return { origin: originCoordinate, destination: destinationCoordinate };
           };
 
-          if (pendingMapRoute) updateMapByRoute(pendingMapRoute);
+          if (pendingMapRoute?.itinerary) updateMapByItinerary(pendingMapRoute.itinerary);
+          else if (pendingMapRoute) updateMapByRoute(pendingMapRoute);
         });
       } catch (error) {
         console.error('카카오 지도 초기화 실패');

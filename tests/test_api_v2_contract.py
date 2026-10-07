@@ -166,6 +166,7 @@ class PredictionApiV2ContractTests(unittest.TestCase):
                     "destination": "사용자가 입력한 도착지",
                     "origin_stop_id": " stop-origin ",
                     "destination_stop_id": "stop-destination",
+                    "destination_occurrence_id": " occ-destination ",
                 },
             )
 
@@ -175,11 +176,19 @@ class PredictionApiV2ContractTests(unittest.TestCase):
         self.assertEqual(kwargs["destination"], "사용자가 입력한 도착지")
         self.assertEqual(kwargs["origin_stop_id"], "stop-origin")
         self.assertEqual(kwargs["destination_stop_id"], "stop-destination")
+        self.assertEqual(kwargs["destination_occurrence_id"], "occ-destination")
 
     def test_blank_stop_id_is_rejected(self) -> None:
         response = self.client.post(
             "/api/predict",
             json={"origin": "대전역", "destination": "세종시청", "origin_stop_id": "   "},
+        )
+        self.assertEqual(response.status_code, 422)
+
+    def test_occurrence_id_requires_a_stop_id(self) -> None:
+        response = self.client.post(
+            "/api/predict",
+            json={"origin": "대전역", "destination": "도착", "origin_occurrence_id": "occ-1"},
         )
         self.assertEqual(response.status_code, 422)
 
@@ -204,7 +213,7 @@ class PredictionApiV2ContractTests(unittest.TestCase):
         self.assertEqual(unpaired.status_code, 422)
         self.assertEqual(out_of_range.status_code, 422)
 
-    def test_route_lookup_failure_is_a_client_error_not_a_fake_route(self) -> None:
+    def test_invalid_stop_lookup_remains_a_client_error(self) -> None:
         fake_service = Mock()
         fake_service.predict_boarding.side_effect = ValueError(
             "현재 Neo4j v2 데이터에서 이용 가능한 직접 노선을 찾지 못했습니다."
@@ -217,6 +226,23 @@ class PredictionApiV2ContractTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("직접 노선", response.json()["detail"])
+
+    def test_valid_stop_pair_without_supported_route_returns_empty_result(self) -> None:
+        fake_service = Mock()
+        result = _v2_result()
+        result.update({"result_status": "NO_SUPPORTED_ROUTE", "routes": [], "itineraries": [],
+                       "reasoning": "현재 데이터 범위에서 경로를 찾지 못했습니다.",
+                       "explanation": "현재 데이터 범위에서 경로를 찾지 못했습니다."})
+        fake_service.predict_boarding.return_value = result
+        with patch.object(app_module, "get_service", return_value=fake_service):
+            response = self.client.post(
+                "/api/predict", json={"origin": "출발", "destination": "도착"}
+            )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["result_status"], "NO_SUPPORTED_ROUTE")
+        self.assertEqual(payload["routes"], [])
+        self.assertEqual(payload["itineraries"], [])
 
 
 class StopSearchApiTests(unittest.TestCase):

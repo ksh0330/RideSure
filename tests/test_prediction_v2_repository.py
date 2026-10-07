@@ -70,28 +70,50 @@ class StopLookupTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     repository.find_nearby_stops(lat, lon, radius)
 
-    def test_name_lookup_returns_all_candidates_and_orders_exact_first_in_query(self) -> None:
+    def test_name_lookup_orders_raw_normalized_prefix_and_partial(self) -> None:
         candidates = [
-            {
-                "stop_id": "exact",
-                "stop_name": "세종시청",
-                "exact_match": True,
-            },
-            {
-                "stop_id": "expanded",
-                "stop_name": "세종시청.교육청.시의회",
-                "exact_match": False,
-            },
+            {"stop_id": "partial", "stop_name": "동대전역", "line_names": ["2"]},
+            {"stop_id": "prefix", "stop_name": "대전역네거리", "line_names": ["3"]},
+            {"stop_id": "normalized", "stop_name": "대전 역", "line_names": ["B1"]},
+            {"stop_id": "exact", "stop_name": "대전역", "line_names": ["B1", "2"]},
         ]
-        driver = FakeDriver(candidates)
+        driver = FakeDriver(candidates, [])
         repository = V2TransitRepository(driver)
 
-        self.assertEqual(repository.find_stops_by_name(" 세종시청 "), candidates)
-        query, parameters = driver.calls[0]
-        self.assertIn("CONTAINS", query)
-        self.assertIn("ORDER BY exact_match DESC, prefix_match DESC", query)
-        self.assertIn("stop.stop_id AS stop_id", query)
-        self.assertEqual(parameters["name_query"], "세종시청")
+        found = repository.find_stops_by_name(" 대전역 ")
+        self.assertEqual([item["stop_id"] for item in found],
+                         ["exact", "normalized", "prefix", "partial"])
+        self.assertEqual([item["match_kind"] for item in found],
+                         ["RAW_EXACT", "NORMALIZED_EXACT", "NORMALIZED_PREFIX", "PARTIAL"])
+        self.assertTrue(found[0]["exact_match"])
+        self.assertFalse(found[1]["exact_match"])
+        self.assertEqual(found[0]["line_names"], ["B1", "2"])
+        self.assertIn("StopOccurrence", driver.calls[0][0])
+        self.assertIn("VERIFIED_OFFICIAL_STOP", driver.calls[1][0])
+
+    def test_punctuation_only_variation_and_verified_official_alias(self) -> None:
+        historical = [{"stop_id": "historical", "stop_name": "법원.검찰청", "line_names": ["B1"]}]
+        alias = [{"stop_id": "historical", "stop_name": "법원.검찰청",
+                  "occurrence_id": "verified-occ", "official_stop_name": "법원,검찰청",
+                  "official_stop_id": "official-1", "line_name": "B1", "pattern_id": "p1",
+                  "lat": 36.4, "lon": 127.3}]
+        driver = FakeDriver(historical, alias)
+        found = V2TransitRepository(driver).find_stops_by_name("법원,검찰청")
+        self.assertEqual([row["match_kind"] for row in found],
+                         ["NORMALIZED_EXACT", "VERIFIED_OFFICIAL_ALIAS"])
+        self.assertEqual(found[1]["occurrence_id"], "verified-occ")
+        self.assertEqual(found[1]["official_stop_name"], "법원,검찰청")
+        self.assertEqual(found[1]["lat"], 36.4)
+        query = driver.calls[1][0]
+        self.assertIn("verified.mapping_status IN ['EXACT', 'SEQUENCE_MATCH']", query)
+        self.assertIn("verified.official_node_id = official.official_node_id", query)
+
+    def test_unverified_name_similarity_does_not_create_alias(self) -> None:
+        driver = FakeDriver([], [])
+        self.assertEqual(V2TransitRepository(driver).find_stops_by_name("현재 공식명"), [])
+        selected = FakeDriver([])
+        self.assertIsNone(V2TransitRepository(selected).find_verified_stop_occurrence_by_id("unverified"))
+        self.assertIn("VERIFIED_OFFICIAL_STOP", selected.calls[0][0])
 
     def test_selected_stop_lookup_uses_id_and_requires_routeable_occurrence(self) -> None:
         selected = {"stop_id": "chosen", "stop_name": "동명", "line_names": ["1001"]}
@@ -108,6 +130,25 @@ class StopLookupTests(unittest.TestCase):
 
 
 class DirectRouteTests(unittest.TestCase):
+    def test_selected_occurrence_filters_both_routing_queries(self) -> None:
+        driver = FakeDriver([], [])
+        repository = V2TransitRepository(driver)
+        repository.find_direct_routes(
+            "과거 출발", "과거 도착", origin_stop_id="start-stop",
+            destination_stop_id="end-stop", origin_occurrence_id="start-occ",
+            destination_occurrence_id="end-occ",
+        )
+        repository.find_one_transfer_routes(
+            "과거 출발", "과거 도착", origin_stop_id="start-stop",
+            destination_stop_id="end-stop", origin_occurrence_id="start-occ",
+            destination_occurrence_id="end-occ",
+        )
+        for query, parameters in driver.calls:
+            self.assertIn("origin_occurrence.occurrence_id = $origin_occurrence_id", query)
+            self.assertIn("destination_occurrence.occurrence_id = $destination_occurrence_id", query)
+            self.assertEqual(parameters["origin_occurrence_id"], "start-occ")
+            self.assertEqual(parameters["destination_occurrence_id"], "end-occ")
+
     def test_direct_route_keeps_repeated_occurrences_and_real_stop_fields(self) -> None:
         route = {
             "pattern_id": "p1",

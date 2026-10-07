@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 from math import isfinite
 from typing import Any, Sequence
 
+from official_stop_mapping import normalize_presentation_name
+
 
 @dataclass(frozen=True)
 class CongestionResult:
@@ -121,44 +123,119 @@ class V2TransitRepository:
     def find_stops_by_name(
         self, query_text: str, limit: int = 10
     ) -> list[dict[str, Any]]:
-        """Return routeable name candidates, exact matches first.
-
-        This method deliberately does not collapse homonyms or pick one result.
-        Callers must use the returned stop ID to make an unambiguous selection.
-        """
+        """Search historical stops and verified official aliases conservatively."""
         if not isinstance(query_text, str) or not query_text.strip():
             raise ValueError("query_text must not be empty")
         limit = self._bounded_limit(limit)
-        normalized_query = query_text.strip()
-        query = """
+        raw = query_text.strip()
+        normalized = normalize_presentation_name(raw).casefold()
+        historical_query = """
         MATCH (stop:Stop)<-[:AT_STOP]-(occurrence:StopOccurrence)
               <-[:HAS_OCCURRENCE]-(pattern:RoutePattern)
               <-[:HAS_PATTERN]-(line:Line)
-        WHERE toLower(stop.name) CONTAINS toLower($name_query)
         WITH stop,
              count(DISTINCT occurrence) AS occurrence_count,
              collect(DISTINCT pattern.pattern_id) AS pattern_ids,
-             collect(DISTINCT line.name) AS line_names,
-             CASE WHEN toLower(stop.name) = toLower($name_query) THEN true ELSE false END
-                 AS exact_match,
-             CASE WHEN toLower(stop.name) STARTS WITH toLower($name_query)
-                  THEN true ELSE false END AS prefix_match
+             collect(DISTINCT line.name) AS line_names
         RETURN stop.stop_id AS stop_id,
                stop.name AS stop_name,
                properties(stop)['lat'] AS lat,
                properties(stop)['lon'] AS lon,
                stop.source AS source,
-               exact_match,
                occurrence_count,
                pattern_ids,
                line_names
-        ORDER BY exact_match DESC, prefix_match DESC, stop.name, stop.stop_id
-        LIMIT $limit
+        """
+        alias_query = """
+        MATCH (occurrence:StopOccurrence)-[:AT_STOP]->(historical:Stop)
+        MATCH (pattern:RoutePattern)-[:HAS_OCCURRENCE]->(occurrence)
+        MATCH (line:Line)-[:HAS_PATTERN]->(pattern)
+        MATCH (occurrence)-[verified:VERIFIED_OFFICIAL_STOP]->(official:Stop)
+        WHERE verified.mapping_status IN ['EXACT', 'SEQUENCE_MATCH']
+          AND verified.official_node_id = official.official_node_id
+          AND official.id_kind = 'OFFICIAL_NODE_ID'
+        RETURN DISTINCT historical.stop_id AS stop_id,
+               historical.name AS stop_name,
+               occurrence.occurrence_id AS occurrence_id,
+               official.name AS official_stop_name,
+               official.official_node_id AS official_stop_id,
+               official.lat AS lat, official.lon AS lon,
+               line.name AS line_name, pattern.pattern_id AS pattern_id
         """
         with self.driver.session() as session:
-            return session.run(
-                query, name_query=normalized_query, limit=limit
-            ).data()
+            historical = session.run(historical_query).data()
+            aliases = session.run(alias_query).data()
+
+        def rank(name: str) -> int | None:
+            folded = normalize_presentation_name(name).casefold()
+            if name.casefold() == raw.casefold():
+                return 0
+            if folded == normalized:
+                return 1
+            if folded.startswith(normalized):
+                return 2
+            if normalized in folded:
+                return 3
+            return None
+
+        scored: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+        for stop in historical:
+            priority = rank(stop["stop_name"])
+            if priority is None:
+                continue
+            candidate = dict(stop)
+            candidate["line_names"] = sorted(
+                candidate.get("line_names") or [],
+                key=lambda line: (not str(line).startswith("B"), str(line)),
+            )
+            candidate["exact_match"] = priority == 0
+            candidate["match_kind"] = ("RAW_EXACT", "NORMALIZED_EXACT", "NORMALIZED_PREFIX", "PARTIAL")[priority]
+            scored.append(((priority, 0, stop["stop_name"], stop["stop_id"], ""), candidate))
+
+        for alias in aliases:
+            if alias["official_stop_name"] == alias["stop_name"]:
+                continue
+            priority = rank(alias["official_stop_name"])
+            if priority is None:
+                continue
+            # A verified occurrence is the identity of this alias. Its parent
+            # historical Stop may have other, unverified occurrences.
+            candidate = {
+                "stop_id": alias["stop_id"], "stop_name": alias["stop_name"],
+                "occurrence_id": alias["occurrence_id"],
+                "official_stop_name": alias["official_stop_name"],
+                "official_stop_id": alias["official_stop_id"],
+                "line_names": [alias["line_name"]], "pattern_ids": [alias["pattern_id"]],
+                "occurrence_count": 1, "lat": alias["lat"], "lon": alias["lon"],
+                "exact_match": False, "match_kind": "VERIFIED_OFFICIAL_ALIAS",
+            }
+            alias_priority = 1 if priority == 0 else priority
+            scored.append(((alias_priority, 1, alias["stop_name"], alias["stop_id"], alias["occurrence_id"]), candidate))
+        scored.sort(key=lambda item: item[0])
+        return [candidate for _, candidate in scored[:limit]]
+
+    def find_verified_stop_occurrence_by_id(self, occurrence_id: str) -> dict[str, Any] | None:
+        """Resolve an alias selection only through its verified occurrence."""
+        if not isinstance(occurrence_id, str) or not occurrence_id.strip():
+            raise ValueError("occurrence_id must not be empty")
+        query = """
+        MATCH (occurrence:StopOccurrence {occurrence_id: $occurrence_id})-[:AT_STOP]->(historical:Stop)
+        MATCH (pattern:RoutePattern)-[:HAS_OCCURRENCE]->(occurrence)
+        MATCH (line:Line)-[:HAS_PATTERN]->(pattern)
+        MATCH (occurrence)-[verified:VERIFIED_OFFICIAL_STOP]->(official:Stop)
+        WHERE verified.mapping_status IN ['EXACT', 'SEQUENCE_MATCH']
+          AND verified.official_node_id = official.official_node_id
+          AND official.id_kind = 'OFFICIAL_NODE_ID'
+        RETURN historical.stop_id AS stop_id, historical.name AS stop_name,
+               occurrence.occurrence_id AS occurrence_id,
+               official.name AS official_stop_name,
+               official.official_node_id AS official_stop_id,
+               official.lat AS lat, official.lon AS lon,
+               line.name AS line_name, pattern.pattern_id AS pattern_id
+        """
+        with self.driver.session() as session:
+            record = session.run(query, occurrence_id=occurrence_id.strip()).single()
+        return dict(record) if record else None
 
     def find_stop_by_id(self, stop_id: str) -> dict[str, Any] | None:
         """Resolve one routeable Stop by identity, without a name fallback."""
@@ -190,6 +267,8 @@ class V2TransitRepository:
         *,
         origin_stop_id: str | None = None,
         destination_stop_id: str | None = None,
+        origin_occurrence_id: str | None = None,
+        destination_occurrence_id: str | None = None,
     ) -> list[dict[str, Any]]:
         limit = self._bounded_limit(limit)
         if origin_stop_id is None and not origin_stop_name:
@@ -201,11 +280,13 @@ class V2TransitRepository:
               <-[:HAS_OCCURRENCE]-(pattern:RoutePattern)<-[:HAS_PATTERN]-(line:Line)
         WHERE (($origin_stop_id IS NOT NULL AND origin.stop_id = $origin_stop_id)
                OR ($origin_stop_id IS NULL AND origin.name = $origin_name))
+          AND ($origin_occurrence_id IS NULL OR origin_occurrence.occurrence_id = $origin_occurrence_id)
           AND ($line_name IS NULL OR line.name = $line_name)
         MATCH path=(origin_occurrence)-[:NEXT*1..500]->(destination_occurrence:StopOccurrence)
         MATCH (destination_occurrence)-[:AT_STOP]->(destination:Stop)
         WHERE (($destination_stop_id IS NOT NULL AND destination.stop_id = $destination_stop_id)
                OR ($destination_stop_id IS NULL AND destination.name = $destination_name))
+          AND ($destination_occurrence_id IS NULL OR destination_occurrence.occurrence_id = $destination_occurrence_id)
           AND all(occurrence IN nodes(path)
                   WHERE occurrence.pattern_id = pattern.pattern_id)
           AND all(next_relationship IN relationships(path)
@@ -231,6 +312,7 @@ class V2TransitRepository:
                  seq: occurrence.seq,
                  stop_id: stop.stop_id,
                  stop_name: stop.name,
+                 official_stop_name: official.name,
                  lat: official.lat,
                  lon: official.lon
              }) AS stops
@@ -266,6 +348,8 @@ class V2TransitRepository:
                 destination_name=destination_stop_name,
                 origin_stop_id=origin_stop_id,
                 destination_stop_id=destination_stop_id,
+                origin_occurrence_id=origin_occurrence_id,
+                destination_occurrence_id=destination_occurrence_id,
                 line_name=line_name,
                 limit=limit,
             ).data()
@@ -278,6 +362,8 @@ class V2TransitRepository:
         *,
         origin_stop_id: str | None = None,
         destination_stop_id: str | None = None,
+        origin_occurrence_id: str | None = None,
+        destination_occurrence_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Find two forward historical ride legs joined by one verified physical stop."""
         limit = self._bounded_limit(limit)
@@ -290,6 +376,7 @@ class V2TransitRepository:
               <-[:HAS_OCCURRENCE]-(pattern1:RoutePattern)<-[:HAS_PATTERN]-(line1:Line)
         WHERE (($origin_stop_id IS NOT NULL AND origin.stop_id = $origin_stop_id)
                OR ($origin_stop_id IS NULL AND origin.name = $origin_name))
+          AND ($origin_occurrence_id IS NULL OR origin_occurrence.occurrence_id = $origin_occurrence_id)
         MATCH path1=(origin_occurrence)-[:NEXT*1..500]->(transfer1:StopOccurrence)
         MATCH (pattern1)-[:HAS_OCCURRENCE]->(transfer1)
         MATCH (transfer1)-[mapping1:VERIFIED_OFFICIAL_STOP]->(physical:Stop)
@@ -309,6 +396,7 @@ class V2TransitRepository:
         MATCH (destination_occurrence)-[:AT_STOP]->(destination:Stop)
         WHERE (($destination_stop_id IS NOT NULL AND destination.stop_id = $destination_stop_id)
                OR ($destination_stop_id IS NULL AND destination.name = $destination_name))
+          AND ($destination_occurrence_id IS NULL OR destination_occurrence.occurrence_id = $destination_occurrence_id)
           AND all(node IN nodes(path2) WHERE node.pattern_id = pattern2.pattern_id)
           AND all(rel IN relationships(path2)
                   WHERE endNode(rel).seq = startNode(rel).seq + 1)
@@ -347,6 +435,8 @@ class V2TransitRepository:
                 destination_name=destination_stop_name,
                 origin_stop_id=origin_stop_id,
                 destination_stop_id=destination_stop_id,
+                origin_occurrence_id=origin_occurrence_id,
+                destination_occurrence_id=destination_occurrence_id,
                 limit=limit,
             ).data()
 
@@ -452,6 +542,7 @@ class V2TransitRepository:
                occurrence.seq AS seq,
                stop.stop_id AS stop_id,
                stop.name AS stop_name,
+               official.name AS official_stop_name,
                official.lat AS lat,
                official.lon AS lon
         ORDER BY occurrence.seq, occurrence.occurrence_id
