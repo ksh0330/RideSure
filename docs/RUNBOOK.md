@@ -53,17 +53,19 @@ Open <http://127.0.0.1:8000/>. Use this exact origin in Kakao Developers; `local
 
 ## 7. Manual smoke tests
 
-Choose stops from RideSure's stop suggestions; use date `2025-11-08` and time `08:00`.
+Type part of a stop name and choose an autocomplete result with the mouse or Arrow keys and Enter. Editing the input clears the previous stop selection. Use historical date `2025-11-08`; the time controls which hourly onboard observation is shown.
 
 | Case | Input | Expected |
 |---|---|---|
-| B1 direct | 대전역 → 세종시청.교육청.시의회 | Historical B1 route, two endpoint markers, and validated Kakao BUS road geometry when both Kakao keys are configured. |
-| 1000 direct | 두루초.중학교 → 조형아파트 | Historical line 1000 route and validated BUS road geometry when available. |
-| One transfer | 대평동(해들마을) → 첫마을3단지 | 1000 then 1004 via 세종고속시외버스터미널; each leg has its own evidence and validated line when available. |
+| B1 direct, 09:00 | 대전역 → 세종시청.교육청.시의회 | Historical B1 current-route card; boarding likelihood, relative congestion, onboard count, and validated Kakao BUS geometry and time when configured. |
+| 1000 direct, 10:00 | 두루초.중학교 → 조형아파트 | Historical line 1000 card and validated BUS geometry/time when available. The selected hour may have a different relative congestion level from 09:00. |
+| One transfer, 10:00 | 대평동(해들마을) → 첫마을3단지 | 1000 then 1004 via the verified 세종고속시외버스터미널 stop; per-leg evidence and BUS time. Without a fully verified Kakao itinerary, the BUS-time sum explicitly excludes transfer waiting. |
 | Missing geometry | 대전역 → 소담동 | B1 historical route remains; the unresolved destination has no verified coordinates, so no destination marker or fabricated line appears. |
 | No supported route | Select two valid suggested stops for which no direct or verified one-transfer path is returned | Explicit no-supported-route state; no invented route or line. |
 
 The last case depends on the selected graph directions. Use `/api/predict` to confirm `result_status=NO_SUPPORTED_ROUTE` when choosing a pair; it is not an API error. The clean-room browser review also confirmed the B1, 1000, and 1000→1004 cases with actual Kakao BUS road-following geometry.
+
+`route_options` contains at most three distinct cards: the current route and meaningful comparisons. A recommendation appears only when the historical categorical boarding likelihood improves, or when a poor current direct route has a shorter alternative with both full travel times independently verified. The likelihood is not a boarding probability; `boarding_probability` stays `null`. Relative congestion is not vehicle-capacity occupancy, and this is not a realtime service. The app invents no transfer wait or missing time.
 
 ## 8. Automated tests
 
