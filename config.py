@@ -150,8 +150,9 @@ def validate_required_config(groups: Iterable[str]) -> None:
 
 
 HOUR_COLS = [f"{hour:02d}시" for hour in range(24)]
+HISTORICAL_DATA_DIR = PROJECT_ROOT / "data" / "historical"
 INPUT_FILES = [
-    str(PROJECT_ROOT / "노선·정류장 지표(노선별 차내 재차인원)_20251108 (1).csv"),
-    str(PROJECT_ROOT / "노선·정류장 지표(노선별 차내 재차인원)_20251108 (2).csv"),
-    str(PROJECT_ROOT / "노선·정류장 지표(노선별 차내 재차인원)_20251108 (3).csv"),
+    str(HISTORICAL_DATA_DIR / "노선·정류장 지표(노선별 차내 재차인원)_20251108 (1).csv"),
+    str(HISTORICAL_DATA_DIR / "노선·정류장 지표(노선별 차내 재차인원)_20251108 (2).csv"),
+    str(HISTORICAL_DATA_DIR / "노선·정류장 지표(노선별 차내 재차인원)_20251108 (3).csv"),
 ]
