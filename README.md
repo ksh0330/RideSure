@@ -337,6 +337,7 @@ sequence error = 0
 ### Tests
 
 ```bash
+python -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
@@ -388,6 +389,14 @@ python -m pytest -q
 - Kakao REST API key
 
 EXAONE, GPU, `DATA_GO_KR_SERVICE_KEY`는 기본 데모 실행에 필요하지 않습니다.
+
+| 파일 | 용도 |
+|---|---|
+| `requirements-demo.txt` | 기본 데모 (FastAPI, Neo4j, 지도). 아래 실행 절차는 이 파일만 사용 |
+| `requirements-dev.txt` | 데모 + `pytest` (테스트 실행용) |
+| `requirements.txt` | 데모 + 로컬 EXAONE 설명 서버 (transformers, accelerate) |
+| `requirements-lock.txt` | `requirements.txt`의 전체 고정 버전, `scripts/setup.ps1`이 사용 |
+| `requirements-cuda.txt` | PyTorch CUDA 12.8 wheel, `scripts/setup.ps1`이 별도 인덱스로 설치 |
 
 ### Windows PowerShell
 

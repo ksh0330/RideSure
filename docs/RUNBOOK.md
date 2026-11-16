@@ -75,7 +75,7 @@ python -m scripts.checks javascript
 node tests/test_transfer_frontend.cjs
 ```
 
-Install `pytest` separately for the optional test suite (`python -m pip install pytest`). Optional deeper checks: `python data_insert_v2.py verify` (running v2 database), `python -m compileall -q app.py config.py service.py prediction_v2.py scripts`, and `git diff --check`. The JavaScript check extracts inline scripts through the repository's stable `scripts.checks` command; no manual extraction is needed.
+Install the test dependencies with `python -m pip install -r requirements-dev.txt` (demo requirements plus `pytest`). Optional deeper checks: `python data_insert_v2.py verify` (running v2 database), `python -m compileall -q app.py config.py service.py prediction_v2.py scripts`, and `git diff --check`. The JavaScript check extracts inline scripts through the repository's stable `scripts.checks` command; no manual extraction is needed.
 
 ## 9. Stop services
 
