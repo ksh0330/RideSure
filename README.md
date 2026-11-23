@@ -1,5 +1,7 @@
 # RideSure
 
+[![tests](https://github.com/ksh0330/RideSure/actions/workflows/tests.yml/badge.svg)](https://github.com/ksh0330/RideSure/actions/workflows/tests.yml)
+
 **과거 버스 재차인원을 바탕으로 탑승 가능성을 판단하고, 현재 경로와 대안을 비교하는 대중교통 프로토타입**
 
 > **이번 버스를 타도 될까?**
@@ -8,6 +10,20 @@
 > 탑승 가능성, 상대 혼잡, 재차인원, 예상 이동시간을 보여주고, 현재 경로보다 탑승 여유가 높은 후보가 있으면 대안을 제시합니다.
 
 현재 버전은 **2025-11-08 historical 차내 재차인원 snapshot**을 사용하는 포트폴리오 데모입니다. 실시간 교통 서비스가 아니며, 탑승 가능성은 실제 승차 성공 확률이 아닌 과거 재차인원의 상대 혼잡 수준을 바탕으로 한 범주형 판단입니다.
+
+---
+
+## English Summary
+
+RideSure is a public-transit prototype that answers *"Should I take this bus?"*. It uses historical in-vehicle passenger counts (a 2025-11-08 snapshot) stored in a Neo4j knowledge graph to rate boarding likelihood for a route, compares direct and verified one-transfer candidates, and recommends an alternative when a candidate has clearly better boarding room.
+
+- **Boarding likelihood** is a categorical label derived from relative congestion within the historical observations. It is not a real boarding probability; `boarding_probability` is always `null`.
+- **Graph model**: historical `Stop`s are separated from per-pattern `StopOccurrence`s linked by `NEXT`, with 273,000 `LoadObservation`s carrying file/row/hour provenance.
+- **Official stop verification**: historical occurrences are linked to TAGO stops (`VERIFIED_OFFICIAL_STOP`) only when route, direction, full stop order and neighbouring stops agree. Transfers are allowed only at the same verified official stop.
+- **Travel time and map geometry** come from Kakao transit responses only when the bus line, boarding stop, alighting stop and coordinates match.
+- **Stack**: FastAPI, Neo4j 5.26, a static web UI with Kakao Maps, and an optional local EXAONE explanation server that does not affect routing or congestion values.
+
+This is a portfolio demo, not a live service. See [Quick Start](#quick-start) to run it and [Tests](#tests) to run the test suite.
 
 ---
 
@@ -344,9 +360,13 @@ python -m pytest -q
 현재 검증 결과:
 
 ```text
-121 passed
+126 passed
 9 subtests passed
 ```
+
+테스트는 mock과 fixture만 사용하므로 Neo4j, Kakao API, `.env` 없이 실행됩니다. `tests/test_transfer_frontend.py`는 Node.js가 필요합니다.
+
+GitHub Actions([`.github/workflows/tests.yml`](.github/workflows/tests.yml))가 push와 pull request마다 Python 3.12에서 같은 `python -m pytest -q`를 실행합니다.
 
 브라우저에서는 다음 대표 시나리오를 직접 확인했습니다.
 
@@ -375,6 +395,16 @@ python -m pytest -q
 - 추천은 상용 지도 서비스 수준의 최적 경로 판정이 아닙니다.
 
 데이터가 부족한 경우 값을 만들어내지 않고 `UNKNOWN / 데이터 부족`으로 남깁니다.
+
+### 향후 계획
+
+위 한계와 [Neo4j v2 문서](docs/NEO4J_V2.md)의 제한 항목에서 이어지는 후속 과제입니다.
+
+- 실시간 재차인원 importer와 `LoadProfile` 생성 batch 구현
+- B1 미해결 occurrence 10개의 공식 정류장 검증
+- `DATA_GO_KR_SERVICE_KEY`를 이용한 TAGO snapshot 갱신
+- 도보 연결과 2회 이상 환승 지원 검토
+- 차량 정원·탑승 성공 label 등 실제 확률 산출에 필요한 데이터 확보
 
 ---
 
