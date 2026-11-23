@@ -1,0 +1,35 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements-demo.txt
+            requirements-dev.txt
+
+      # tests/test_transfer_frontend.py runs a small Node script.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      # The suite uses mocks and fixtures only: no Neo4j, Kakao, TAGO or model server.
+      - name: Run pytest
+        run: python -m pytest -q
